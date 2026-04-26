@@ -14,7 +14,9 @@
       "PowerShell(docker run *)",
       "PowerShell(New-Item *)",
       "PowerShell(Out-Null *)",
-      "PowerShell(claude *)"
+      "PowerShell(claude *)",
+      "Bash(mkdir -p /tmp/bench004)",
+      "Read(//tmp/**)"
     ]
   }
 }
