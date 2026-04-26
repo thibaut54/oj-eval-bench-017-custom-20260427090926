@@ -35,6 +35,17 @@ PROBLEM_REGISTRY="${PROJECT_ROOT}/config/problem_registry.json"
 # 默认并发数为 1
 CONCURRENCY=${CONCURRENCY:-1}
 
+# Claude Code config mode: vanilla (default) | custom
+# - vanilla: empty ~/.claude in container (current behavior, baseline)
+# - custom: bind-mount host ~/.claude (agents, skills, commands, plugins, CLAUDE.md, settings.json)
+CLAUDE_CONFIG_MODE=${CLAUDE_CONFIG_MODE:-vanilla}
+export CLAUDE_CONFIG_MODE
+
+# Claude Code effort level (optional): low | medium | high | xhigh | max
+# Propagated to "claude -p --effort <level>" inside the container. Empty = CLI default.
+CLAUDE_EFFORT="${CLAUDE_EFFORT:-}"
+export CLAUDE_EFFORT
+
 # 检查配置文件是否存在
 if [ ! -f "$AGENT_MODEL_CONFIG" ]; then
     echo "❌ Configuration file not found: ${AGENT_MODEL_CONFIG}"
@@ -211,11 +222,22 @@ fi
 get_log_model_name() {
   local model_name="$1"
   local log_model_name
-  if [[ "${model_name}" == "Sonnet" || "${model_name}" == "Claude Sonnet 4.5" ]]; then
-    log_model_name="sonnet-4.5"
-  else
-    log_model_name="${model_name// /-}"
-    log_model_name="${log_model_name//\//-}"
+  case "$model_name" in
+    Sonnet|"Claude Sonnet 4.5")  log_model_name="sonnet-4.5" ;;
+    Opus|"Claude Opus 4.7")      log_model_name="opus-4-7" ;;
+    Haiku|"Claude Haiku 4.5")    log_model_name="haiku-4-5" ;;
+    *)
+      log_model_name="${model_name// /-}"
+      log_model_name="${log_model_name//\//-}"
+      ;;
+  esac
+  # Suffix Claude Code logs with config mode so vanilla and custom runs do not collide
+  if [ "$AGENT_TYPE" = "claude-code" ] || [ "$AGENT_TYPE" = "Claude Code" ]; then
+    log_model_name="${log_model_name}-${CLAUDE_CONFIG_MODE}"
+    # Suffix with effort if explicitly set so distinct effort levels do not collide
+    if [ -n "$CLAUDE_EFFORT" ]; then
+      log_model_name="${log_model_name}-${CLAUDE_EFFORT}"
+    fi
   fi
   echo "$log_model_name"
 }
@@ -283,7 +305,7 @@ run_single_evaluation() {
 export -f run_single_evaluation
 export -f should_skip_problem
 export -f get_log_model_name
-export AGENT_TYPE MODEL_NAME PROJECT_ROOT PROBLEM_REGISTRY SKIP_EXISTING FORCE
+export AGENT_TYPE MODEL_NAME PROJECT_ROOT PROBLEM_REGISTRY SKIP_EXISTING FORCE CLAUDE_CONFIG_MODE CLAUDE_EFFORT
 
 # =============================================================================
 # 主执行逻辑
@@ -317,6 +339,9 @@ echo "Problems: ${final_problem_list[*]}"
 echo "Total: $total_problems problems"
 echo "Concurrency: $CONCURRENCY"
 echo "Skip Existing: ${SKIP_EXISTING:-false}"
+if [ "$AGENT_TYPE" = "claude-code" ] || [ "$AGENT_TYPE" = "Claude Code" ]; then
+  echo "Claude Config Mode: ${CLAUDE_CONFIG_MODE}"
+fi
 echo "=========================================="
 echo ""
 

@@ -48,6 +48,10 @@ else
   LOG_MODEL_NAME="${MODEL_NAME// /-}"
   LOG_MODEL_NAME="${LOG_MODEL_NAME//\//-}"
 fi
+# Mirror the host-side suffix (run_evaluation.sh / run_all_problem.sh) so the in-container
+# log filename matches the LOG_DIR path. CLAUDE_CONFIG_MODE is propagated as an env var.
+CLAUDE_CONFIG_MODE="${CLAUDE_CONFIG_MODE:-vanilla}"
+LOG_MODEL_NAME="${LOG_MODEL_NAME}-${CLAUDE_CONFIG_MODE}"
 
 LOG_FILE="${LOG_DIR}/oj_eval_${AGENT_TYPE}_${LOG_MODEL_NAME}_${PROBLEM_ID}_${TIMESTAMP}.log"
 echo "📝 Log file: $LOG_FILE"
@@ -78,12 +82,27 @@ echo "========================================="
 : "${AGENT_TYPE?Required: AGENT_TYPE}"
 : "${GITHUB_TOKEN?Required: GITHUB_TOKEN}"
 : "${ACMOJ_TOKEN?Required: ACMOJ_TOKEN}"
-: "${ANTHROPIC_API_KEY?Required: ANTHROPIC_API}"
+if [ -z "${ANTHROPIC_API_KEY}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN}" ]; then
+  echo "❌ Required: either ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN"
+  exit 1
+fi
 # : "${ANTHROPIC_BASE_URL?Required: ANTHROPIC_BASE_URL}"
 : "${MAX_SUBMISSIONS?Required: MAX_SUBMISSIONS}"
 
 # MODEL_NAME default value, error if not provided
 : "${MODEL_NAME?Required: MODEL_NAME}"
+
+# Resolve API model ID from human-friendly alias.
+# Le bench utilise MODEL_NAME=Sonnet/Haiku/Opus pour le nommage des logs,
+# mais l'API Anthropic exige un ID precis (claude-sonnet-4-5, etc.).
+case "$MODEL_NAME" in
+  Sonnet|"Claude Sonnet 4.5")  API_MODEL_ID="claude-sonnet-4-5" ;;
+  "Claude Sonnet 4.6")          API_MODEL_ID="claude-sonnet-4-6" ;;
+  Haiku|"Claude Haiku 4.5")     API_MODEL_ID="claude-haiku-4-5" ;;
+  Opus|"Claude Opus 4.7")       API_MODEL_ID="claude-opus-4-7" ;;
+  *)                             API_MODEL_ID="$MODEL_NAME" ;;
+esac
+echo "🎯 API model id resolved: $MODEL_NAME -> $API_MODEL_ID"
 
 
 # 修改配置文件 ~/.claude/settings.json：
@@ -95,22 +114,48 @@ echo "========================================="
 #   }
 # }
 echo "Configured Claude model: $MODEL_NAME"
-echo "创建配置文件~/.claude/settings.json"
+echo "Claude config mode: $CLAUDE_CONFIG_MODE"
 mkdir -p ~/.claude
 
+if [ "$CLAUDE_CONFIG_MODE" = "custom" ] && [ -f /tmp/host-settings.json ]; then
+  echo "✅ Custom mode: merging host settings.json (model overrides applied, hooks stripped)"
+  jq --arg m "$API_MODEL_ID" '
+    .env = ((.env // {}) + {
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL": $m,
+      "ANTHROPIC_DEFAULT_SONNET_MODEL": $m,
+      "ANTHROPIC_DEFAULT_OPUS_MODEL": $m
+    })
+    | del(.hooks)
+  ' /tmp/host-settings.json > ~/.claude/settings.json
 
-echo "write ~/.claude/settings.json"
-
-
-cat <<EOT > ~/.claude/settings.json
+  # Visibility: surface what custom config landed inside the container
+  echo "----- ~/.claude inventory (custom mode) -----"
+  for entry in agents skills commands plugins CLAUDE.md settings.json; do
+    if [ -e "$HOME/.claude/$entry" ]; then
+      if [ -d "$HOME/.claude/$entry" ]; then
+        count=$(find "$HOME/.claude/$entry" -mindepth 1 -maxdepth 1 | wc -l)
+        echo "  - $entry/ ($count entries)"
+      else
+        size=$(stat -c '%s' "$HOME/.claude/$entry" 2>/dev/null || echo "?")
+        echo "  - $entry ($size bytes)"
+      fi
+    else
+      echo "  - $entry MISSING"
+    fi
+  done
+  echo "---------------------------------------------"
+else
+  echo "✅ Vanilla mode: writing minimal settings.json"
+  cat <<EOT > ~/.claude/settings.json
 {
   "env": {
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "$MODEL_NAME",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "$MODEL_NAME",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "$MODEL_NAME"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "$API_MODEL_ID",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "$API_MODEL_ID",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "$API_MODEL_ID"
   }
 }
 EOT
+fi
 
 # --- Configuration Variables ---
 REPO_NAME="oj-eval-${AGENT_TYPE}-${PROBLEM_ID}-${TIMESTAMP}"
@@ -139,6 +184,12 @@ echo "========================================="
 cd "$WORKSPACE_DIR"
 
 export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
+export ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN}"
+if [ -n "${ANTHROPIC_AUTH_TOKEN}" ]; then
+    echo "🔑 Auth: using ANTHROPIC_AUTH_TOKEN (Claude.ai subscription OAuth)"
+elif [ -n "${ANTHROPIC_API_KEY}" ]; then
+    echo "🔑 Auth: using ANTHROPIC_API_KEY (Anthropic console pay-per-use)"
+fi
 # 如果有ANTHROPIC_BASE_URL，则导出
 if [ -n "${ANTHROPIC_BASE_URL}" ]; then
     export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL}"
@@ -310,8 +361,22 @@ echo "Max submissions allowed: ${MAX_SUBMISSIONS}"
 echo "Using model: ${MODEL_NAME}"
 echo "========================================="
 
-# Claude Code command with streaming JSON output ANTHROPIC_SMALL_FAST_MODEL=gpt-5 ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5 ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5 ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5
-ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL}" ANTHROPIC_MODEL="${MODEL_NAME}"  ANTHROPIC_SMALL_FAST_MODEL="${MODEL_NAME}" ANTHROPIC_DEFAULT_HAIKU_MODEL="${MODEL_NAME}" ANTHROPIC_DEFAULT_SONNET_MODEL="${MODEL_NAME}" ANTHROPIC_DEFAULT_OPUS_MODEL="${MODEL_NAME}" claude -p "${SELECTED_PROMPT}" --model "${MODEL_NAME}" --output-format stream-json --dangerously-skip-permissions --verbose
+# Claude Code command with streaming JSON output
+# Note : si ANTHROPIC_AUTH_TOKEN est defini, claude code l'utilise prioritairement sur ANTHROPIC_API_KEY.
+EFFORT_ARGS=()
+if [ -n "${CLAUDE_EFFORT}" ]; then
+  EFFORT_ARGS=(--effort "${CLAUDE_EFFORT}")
+  echo "💪 Effort level: ${CLAUDE_EFFORT}"
+fi
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN}" \
+ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL}" \
+ANTHROPIC_MODEL="${API_MODEL_ID}" \
+ANTHROPIC_SMALL_FAST_MODEL="${API_MODEL_ID}" \
+ANTHROPIC_DEFAULT_HAIKU_MODEL="${API_MODEL_ID}" \
+ANTHROPIC_DEFAULT_SONNET_MODEL="${API_MODEL_ID}" \
+ANTHROPIC_DEFAULT_OPUS_MODEL="${API_MODEL_ID}" \
+claude -p "${SELECTED_PROMPT}" --model "${API_MODEL_ID}" "${EFFORT_ARGS[@]}" --output-format stream-json --dangerously-skip-permissions --verbose
 
 echo "========================================="
 echo "🎯 Agent session completed"

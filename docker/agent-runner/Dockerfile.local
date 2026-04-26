@@ -1,0 +1,26 @@
+# Image derivee de prlu/ojbench-agent-runner:latest pour fixer deux problemes
+# de l'image upstream :
+#   1. /workspace est root:root 755 -> agent (uid 1001) ne peut pas y ecrire
+#   2. Claude Code CLI n'est pas installe / pas dans le PATH
+#
+# Build : docker build -f docker/agent-runner/Dockerfile.local -t projdevbench/agent-runner:local .
+# Utilisee automatiquement par scripts/run_evaluation.sh quand AGENT=claude-code.
+
+FROM prlu/ojbench-agent-runner:latest
+
+USER root
+
+# Fix permissions pour que l'user agent (uid 1001) puisse ecrire dans /workspace
+RUN chown -R agent:agent /workspace && chmod 755 /workspace
+
+# Installation de Claude Code CLI (absente de l'image upstream)
+ARG CLAUDE_CODE_VERSION=latest
+RUN if [ "$CLAUDE_CODE_VERSION" = "latest" ]; then \
+        npm install -g @anthropic-ai/claude-code; \
+    else \
+        npm install -g @anthropic-ai/claude-code@"$CLAUDE_CODE_VERSION"; \
+    fi && \
+    claude --version
+
+USER agent
+WORKDIR /workspace
