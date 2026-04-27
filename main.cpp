@@ -191,69 +191,82 @@ struct UserMap {
     }
 };
 
-// ===== TrainMap =====
+// ===== TrainMap (stores Train pointers to save memory on empty slots) =====
 struct TrainMap {
     int cap;
     int count;
-    Train *items;
+    Train **items; // null = empty slot
     TrainMap() : cap(0), count(0), items(nullptr) {}
     void init(int capacity) {
         cap = capacity; count = 0;
-        items = new Train[cap];
-        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].seats = nullptr; }
+        items = new Train*[cap];
+        for (int i = 0; i < cap; i++) items[i] = nullptr;
     }
     void rehash() {
         int oldcap = cap;
-        Train *old = items;
+        Train **old = items;
         cap *= 2;
-        items = new Train[cap];
-        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].seats = nullptr; }
+        items = new Train*[cap];
+        for (int i = 0; i < cap; i++) items[i] = nullptr;
         count = 0;
-        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
+        for (int i = 0; i < oldcap; i++) {
+            if (old[i]) {
+                // re-insert (move pointer)
+                Train *t = old[i];
+                uint32_t h = hash_str(t->trainID);
+                int mask = cap - 1;
+                int j = h & mask;
+                while (items[j]) j = (j + 1) & mask;
+                items[j] = t;
+                count++;
+            }
+        }
         delete[] old;
     }
     int find_slot(const char *key) const {
         uint32_t h = hash_str(key);
         int mask = cap - 1;
         int i = h & mask;
-        while (items[i].used) {
-            if (my_strcmp(items[i].trainID, key) == 0) return i;
+        while (items[i]) {
+            if (my_strcmp(items[i]->trainID, key) == 0) return i;
             i = (i + 1) & mask;
         }
         return -1;
     }
     Train *get(const char *key) {
         int s = find_slot(key);
-        return s < 0 ? nullptr : &items[s];
+        return s < 0 ? nullptr : items[s];
     }
-    void insert_internal(const Train &t) {
-        uint32_t h = hash_str(t.trainID);
+    bool insert(Train *t) {
+        if ((count + 1) * 2 > cap) rehash();
+        if (find_slot(t->trainID) >= 0) return false;
+        uint32_t h = hash_str(t->trainID);
         int mask = cap - 1;
         int i = h & mask;
-        while (items[i].used) i = (i + 1) & mask;
+        while (items[i]) i = (i + 1) & mask;
         items[i] = t;
-        items[i].used = true;
         count++;
-    }
-    bool insert(const Train &t) {
-        if ((count + 1) * 2 > cap) rehash();
-        if (find_slot(t.trainID) >= 0) return false;
-        insert_internal(t);
         return true;
     }
     bool erase(const char *key) {
         int s = find_slot(key);
         if (s < 0) return false;
-        if (items[s].seats) { delete[] items[s].seats; items[s].seats = nullptr; }
-        items[s].used = false;
+        if (items[s]->seats) { delete[] items[s]->seats; items[s]->seats = nullptr; }
+        delete items[s];
+        items[s] = nullptr;
         count--;
+        // Re-insert subsequent entries
         int mask = cap - 1;
         int i = (s + 1) & mask;
-        while (items[i].used) {
-            Train tmp = items[i];
-            items[i].used = false;
+        while (items[i]) {
+            Train *t = items[i];
+            items[i] = nullptr;
             count--;
-            insert_internal(tmp);
+            uint32_t h = hash_str(t->trainID);
+            int j = h & mask;
+            while (items[j]) j = (j + 1) & mask;
+            items[j] = t;
+            count++;
             i = (i + 1) & mask;
         }
         return true;
@@ -585,9 +598,8 @@ static bool save_state() {
     // Trains
     fwrite(&g_trains.count, sizeof(int), 1, f);
     for (int i = 0; i < g_trains.cap; i++) {
-        if (!g_trains.items[i].used) continue;
-        Train &t = g_trains.items[i];
-        // Save struct WITHOUT the seats pointer effectively (we ignore the pointer value on load).
+        if (!g_trains.items[i]) continue;
+        Train &t = *g_trains.items[i];
         fwrite(&t, sizeof(Train), 1, f);
         int days = t.released ? (t.saleEnd - t.saleStart + 1) : 0;
         int segs = t.released ? (t.stationNum - 1) : 0;
@@ -635,28 +647,25 @@ static bool load_state() {
     // Trains
     if (fread(&n, sizeof(int), 1, f) != 1) { fclose(f); return false; }
     for (int i = 0; i < n; i++) {
-        Train t;
-        if (fread(&t, sizeof(Train), 1, f) != 1) { fclose(f); return false; }
-        t.seats = nullptr;
+        Train *t = new Train();
+        if (fread(t, sizeof(Train), 1, f) != 1) { fclose(f); delete t; return false; }
+        t->seats = nullptr;
         int days = 0, segs = 0;
-        if (fread(&days, sizeof(int), 1, f) != 1) { fclose(f); return false; }
-        if (fread(&segs, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+        if (fread(&days, sizeof(int), 1, f) != 1) { fclose(f); delete t; return false; }
+        if (fread(&segs, sizeof(int), 1, f) != 1) { fclose(f); delete t; return false; }
         if (days > 0 && segs > 0) {
-            t.seats = new int[(long long)days * segs];
-            if ((int)fread(t.seats, sizeof(int), (long long)days * segs, f) != days * segs) {
-                fclose(f); return false;
+            t->seats = new int[(long long)days * segs];
+            if ((int)fread(t->seats, sizeof(int), (long long)days * segs, f) != days * segs) {
+                fclose(f); delete[] t->seats; delete t; return false;
             }
         }
         g_trains.insert(t);
         // Rebuild station index
-        if (t.released) {
-            // Re-find inserted train (since insert copies)
-            Train *tin = g_trains.get(t.trainID);
-            for (int k = 0; k < t.stationNum; k++) {
-                StationTrains *st = g_stations.get_or_create(t.stations[k].s);
-                station_add_train(st, t.trainID, k);
+        if (t->released) {
+            for (int k = 0; k < t->stationNum; k++) {
+                StationTrains *st = g_stations.get_or_create(t->stations[k].s);
+                station_add_train(st, t->trainID, k);
             }
-            (void)tin;
         }
     }
 
@@ -871,7 +880,8 @@ static void cmd_add_train(const ParsedArgs &a) {
     if (stationNum < 2 || stationNum > 100 || seatNum <= 0) { puts("-1"); return; }
     if (g_trains.get(i)) { puts("-1"); return; }
 
-    Train tr;
+    Train *trp = new Train();
+    Train &tr = *trp;
     memset(&tr, 0, sizeof(Train));
     tr.used = true; tr.released = false; tr.seats = nullptr;
     strncpy(tr.trainID, i, 23); tr.trainID[23] = 0;
@@ -883,14 +893,14 @@ static void cmd_add_train(const ParsedArgs &a) {
         char buf[2048]; strncpy(buf, s, 2047); buf[2047] = 0;
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
-        if (cnt != stationNum) { puts("-1"); return; }
+        if (cnt != stationNum) { delete trp; puts("-1"); return; }
         for (int k = 0; k < cnt; k++) { strncpy(tr.stations[k].s, parts[k], 33); tr.stations[k].s[33] = 0; }
     }
     {
         char buf[1024]; strncpy(buf, p, 1023); buf[1023] = 0;
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
-        if (cnt != stationNum - 1) { puts("-1"); return; }
+        if (cnt != stationNum - 1) { delete trp; puts("-1"); return; }
         tr.prices[0] = 0;
         for (int k = 0; k < cnt; k++) tr.prices[k + 1] = tr.prices[k] + atoi(parts[k]);
     }
@@ -899,7 +909,7 @@ static void cmd_add_train(const ParsedArgs &a) {
         char buf[1024]; strncpy(buf, t, 1023); buf[1023] = 0;
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
-        if (cnt != stationNum - 1) { puts("-1"); return; }
+        if (cnt != stationNum - 1) { delete trp; puts("-1"); return; }
         for (int k = 0; k < cnt; k++) travel[k] = atoi(parts[k]);
     }
     {
@@ -907,7 +917,7 @@ static void cmd_add_train(const ParsedArgs &a) {
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
         if (stationNum > 2) {
-            if (cnt != stationNum - 2) { puts("-1"); return; }
+            if (cnt != stationNum - 2) { delete trp; puts("-1"); return; }
             for (int k = 0; k < cnt; k++) stopover[k] = atoi(parts[k]);
         }
     }
@@ -928,12 +938,12 @@ static void cmd_add_train(const ParsedArgs &a) {
         char buf[16]; strncpy(buf, d, 15); buf[15] = 0;
         char *parts[2];
         int cnt = split_pipe(buf, parts, 2);
-        if (cnt != 2) { puts("-1"); return; }
+        if (cnt != 2) { delete trp; puts("-1"); return; }
         tr.saleStart = parse_date(parts[0]);
         tr.saleEnd = parse_date(parts[1]);
     }
 
-    if (!g_trains.insert(tr)) { puts("-1"); return; }
+    if (!g_trains.insert(trp)) { delete trp; puts("-1"); return; }
     puts("0");
 }
 
@@ -1330,7 +1340,10 @@ static void cmd_clean() {
     g_users.items = nullptr; g_users.cap = 0; g_users.count = 0;
 
     for (int i = 0; i < g_trains.cap; i++) {
-        if (g_trains.items[i].used && g_trains.items[i].seats) delete[] g_trains.items[i].seats;
+        if (g_trains.items[i]) {
+            if (g_trains.items[i]->seats) delete[] g_trains.items[i]->seats;
+            delete g_trains.items[i];
+        }
     }
     if (g_trains.items) delete[] g_trains.items;
     g_trains.items = nullptr; g_trains.cap = 0; g_trains.count = 0;
