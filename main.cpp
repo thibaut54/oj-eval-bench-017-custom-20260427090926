@@ -1070,7 +1070,7 @@ static void cmd_query_transfer(const ParsedArgs &a) {
     if (!sf) { puts("0"); return; }
 
     bool found = false;
-    int best_total_time = 0, best_total_cost = 0;
+    int best_total_time = 0, best_total_cost = 0, best_dur1 = 0;
     char best_t1[24], best_t2[24];
     int best_t1_leave = 0, best_t1_arr = 0, best_t1_price = 0, best_t1_seat = 0;
     int best_t2_leave = 0, best_t2_arr = 0, best_t2_price = 0, best_t2_seat = 0;
@@ -1132,6 +1132,7 @@ static void cmd_query_transfer(const ParsedArgs &a) {
 
                 int total_time = arr2 - leave1;
                 int total_cost = price1 + price2;
+                int dur1 = arr1 - leave1;
 
                 bool better = false;
                 if (!found) better = true;
@@ -1143,10 +1144,13 @@ static void cmd_query_transfer(const ParsedArgs &a) {
                     else if (ka == kb) {
                         if (sa < sb) better = true;
                         else if (sa == sb) {
-                            int c = my_strcmp(tid1, best_t1);
-                            if (c < 0) better = true;
-                            else if (c == 0) {
-                                if (my_strcmp(tid2, best_t2) < 0) better = true;
+                            if (dur1 < best_dur1) better = true;
+                            else if (dur1 == best_dur1) {
+                                int c = my_strcmp(tid1, best_t1);
+                                if (c < 0) better = true;
+                                else if (c == 0) {
+                                    if (my_strcmp(tid2, best_t2) < 0) better = true;
+                                }
                             }
                         }
                     }
@@ -1156,6 +1160,7 @@ static void cmd_query_transfer(const ParsedArgs &a) {
                     found = true;
                     best_total_time = total_time;
                     best_total_cost = total_cost;
+                    best_dur1 = dur1;
                     strncpy(best_t1, tid1, 23); best_t1[23] = 0;
                     strncpy(best_t2, tid2, 23); best_t2[23] = 0;
                     strncpy(best_inter, inter, 33); best_inter[33] = 0;
@@ -1363,8 +1368,8 @@ static void cmd_clean() {
 }
 
 int main() {
-    static char line[8192];
-    static char *tokens[256];
+    static char line[32768];
+    static char *tokens[512];
 
     g_users.init(256);
     g_trains.init(64);
