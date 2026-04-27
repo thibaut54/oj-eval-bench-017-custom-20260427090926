@@ -108,6 +108,15 @@ yarn-error.log
 *.dylib
 
 # ============================================
+# CMake build artifacts
+# ============================================
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+build/
+
+# ============================================
 # LaTeX auxiliary files
 # ============================================
 *.aux
