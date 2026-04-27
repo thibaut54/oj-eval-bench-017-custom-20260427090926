@@ -1014,7 +1014,7 @@ struct TicketResult {
 
 static void cmd_query_ticket(const ParsedArgs &a) {
     const char *s = a.get('s'), *t = a.get('t'), *d = a.get('d'), *p = a.get('p');
-    if (!s || !t || !d) { puts("-1"); return; }
+    if (!s || !t || !d) { puts("0"); return; }
     bool sort_by_time = !(p && my_strcmp(p, "cost") == 0);
     int boarding_day = parse_date(d);
     StationTrains *sf = g_stations.find(s);
