@@ -1,433 +1,655 @@
-# ProjDevBench
+# Problem 017 - Train Ticket Management System
 
-[English](README.md) | [中文](README_zh.md) | [Homepage](https://zsworld6.github.io/projdevbenchpage/) | [Paper](https://arxiv.org/abs/2602.01655)
+**ACMOJ Problem ID**: 1170
 
-**ProjDevBench** (Project Development Benchmark) is a benchmark platform for evaluating AI coding agents on end-to-end project development tasks. Unlike existing benchmarks that focus on issue-level bug fixing, ProjDevBench evaluates agents on their ability to construct complete, executable software repositories from high-level specifications.
+## Table of Contents
 
-<p align="center">
-  <img src="assets/tasks.png" alt="Task Comparison" width="600">
-</p>
+- [Problem 017 - Train Ticket Management System](#problem-017---train-ticket-management-system)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Grading Criteria](#grading-criteria)
+  - [Interface Specification](#interface-specification)
+  - [Q&A](#qa)
+  - [Test Data](#test-data)
+  - [Per-Testcase Resource Limits](#per-testcase-resource-limits)
+  - [Submission Requirements](#submission-requirements)
+    - [OJ Git Repository Compilation Process](#oj-git-repository-compilation-process)
+    - [Git Configuration Requirements](#git-configuration-requirements)
+    - [Submission Guidelines](#submission-guidelines)
+    - [Resource Limits](#resource-limits)
+    - [Evaluation Notes](#evaluation-notes)
+    - [Academic Integrity](#academic-integrity)
 
-<p align="center">
-  <em>Task comparison: ProjDevBench evaluates end-to-end repository construction from project-level requirements, unlike benchmarks that modify pre-existing codebases.</em>
-</p>
+## Overview
 
-## Key Features
+#### Implementation Content
 
-- **End-to-End Project Construction**: Agents build complete repositories from scratch, not just patches or single files
-- **Multi-Agent Support**: Evaluate Claude Code, Cursor, Gemini CLI, Codex, Augment, and GitHub Copilot
-- **Dual Evaluation Protocol**: Combines Online Judge (OJ) execution-based testing with LLM-assisted code review
-- **Diagnostic Feedback**: Fine-grained verdict-level signals (Wrong Answer, TLE, MLE, Runtime Error, etc.)
-- **Containerized Execution**: Docker-based isolated environments ensure reproducible results
-- **Git Integration**: Each evaluation creates a GitHub repository tracking the agent's complete problem-solving process
+This assignment requires implementing a train ticket booking system similar to 12306. The system must store user data, ticket data, and train data **locally** and perform efficient operations on them.
 
-<p align="center">
-  <img src="assets/benchmark_pipeline.png" alt="Benchmark Pipeline" width="800">
-</p>
+#### Program Structure
 
-<p align="center">
-  <em>Overview of the ProjDevBench evaluation pipeline.</em>
-</p>
+The backend program must implement the interfaces required in the documentation. After receiving a complete command, it should immediately output the result and return to the state of waiting for input. Use C++ for implementation.
 
-## Benchmark Statistics
+This assignment does not allow the use of external libraries, STL containers (except `std::string`), or the `algorithm` library.
 
-| Metric | Value |
-|--------|-------|
-| Total Problems | 20 |
-| Categories | 8 |
-| Avg. Interaction Turns | 138 |
-| Avg. Tokens per Problem | 4.81M |
-| Overall Acceptance Rate | 27.38% |
 
-## Problem Categories
+## Grading Criteria
 
-<p align="center">
-  <img src="assets/category_pie_chart.png" alt="Category Distribution" width="400">
-</p>
+- Performance - 80%
 
-| Category | Count | Key Challenges |
-|----------|-------|----------------|
-| Data Structures | 7 | Template programming, iterators, memory management |
-| Management Systems | 3 | Business logic, complex queries, file I/O |
-| Interpreters | 3 | Parsing, closures, evaluation |
-| Storage Systems | 2 | B+ tree, disk-based operations |
-| Algorithm | 2 | Precision, codecs |
-| Assembly | 1 | Low-level computation |
-| Game/Simulation | 1 | State machines |
-| Optimization | 2 | Memory management, GPU simulation |
+  Memory usage will be strictly limited in all tests. The program may be opened and closed multiple times during testing.
 
-## Problem Details
+  You can create up to 20 files in the directory where the executable is located.
 
-| ID | Problem Name | Category | Difficulty | Time Limit | Memory Limit | Avg Score |
-|----|--------------|----------|------------|------------|--------------|-----------|
-| 001 | A+B Problem | Algorithm | Easy | 1s | 256 MiB | 54.37 |
-| 002 | int2048 Big Integer | Algorithm | Easy | 10s | 190 MiB | 48.19 |
-| 003 | ICPC Management System | Management | Hard | 2s | 512 MiB | 52.07 |
-| 004 | Bookstore System | Management | Hard | 10s | 64 MiB | 36.29 |
-| 005 | QOI Format Codec | Algorithm | Easy | 10s | 512 MiB | 58.87 |
-| 006 | Minesweeper | Game | Easy | 30s | 256 MiB | 53.51 |
-| 007 | BASIC Interpreter | Interpreter | Easy | 5s | 256 MiB | 47.67 |
-| 008 | MOV Language | Assembly | Easy | - | - | 54.70 |
-| 009 | STLite Vector | Data Structure | Easy | 100s | 768 MiB | 58.46 |
-| 010 | STLite List | Data Structure | Easy | 25s | 768 MiB | 30.76 |
-| 011 | STLite Priority Queue | Data Structure | Easy | 15s | 512 MiB | 57.25 |
-| 012 | STLite Linked HashMap | Data Structure | Easy | 24s | 893 MiB | 43.36 |
-| 013 | STLite Map | Data Structure | Easy | 30s | 893 MiB | 58.21 |
-| 014 | Python Interpreter | Interpreter | Easy | 16s | 512 MiB | 46.23 |
-| 015 | File Storage | Storage | Hard | 16s | 6 MiB | 42.71 |
-| 016 | File Storage BPT | Storage | Hard | 5s | 64 MiB | 40.11 |
-| 017 | Train Ticket System | Management | Hard | 40s | 47 MiB | 53.24 |
-| 018 | Scheme Interpreter | Interpreter | Easy | 1.5s | 244 MiB | 32.94 |
-| 019 | GPU Memory Optimization | Optimization | Easy | 1s | 244 MiB | 36.89 |
-| 020 | Buddy Algorithm | Optimization | Easy | 10s | 244 MiB | 33.33 |
+  There are two types of tests: correctness testing and stress testing.
 
-> **Difficulty Definition**: 
-> - **Easy (E)**: Project-completion setting with partial codebase provided
-> - **Hard (H)**: Project-creation setting requiring from-scratch construction
+- Code Review - 20%
 
-## Project Structure
 
-```
-projdevbench/
-├── config/                    # Configuration files
-│   ├── environment.env        # Environment variable template
-│   ├── problem_registry.json  # Problem definitions
-│   └── agent_model_config.json
-├── docker/                    # Docker configurations
-│   ├── base/                  # Base image with CLI tools
-│   └── agent-runner/          # Runtime image
-├── scripts/                   # Execution scripts
-│   ├── container/             # In-container agent scripts
-│   ├── analyze/               # Result analysis tools
-│   ├── cr/                    # Code review scripts
-│   └── run_evaluation.sh      # Main evaluation script
-├── problem/                   # Problem definitions
-│   └── [problem_id]/          # Each problem folder
-│       ├── README.md          # Problem description
-│       └── submit_acmoj/      # OJ submission client
-└── data/                      # Test data
-```
 
-## Quick Start
 
-### Prerequisites
 
-- Docker Desktop or Docker Engine
-- Git
-- jq (JSON parser)
-- Python 3.8+
-- GitHub account with Personal Access Token (recommend creating a dedicated account for experiments)
-- [ACMOJ](https://acm.sjtu.edu.cn/OnlineJudge) account with API Token (register with student ID `123456123456`)
 
-### GitHub Token Requirements
+## Interface Specification
 
-The evaluation system needs to create repositories and push code on behalf of the agent. Your GitHub Fine-grained Personal Access Token **must** have the following permissions:
+#### User Related
 
-Create at: https://github.com/settings/personal-access-tokens/new
+A user has the following data:
 
-**Required permissions:**
+- `username`: The unique identifier of the user, a string starting with a letter and composed of letters, digits, and underscores, with a length not exceeding 20.
+- `password`: A string composed of letters, digits, and underscores, with a length between 6 and 30.
+- `name`: A string composed of two to five Chinese characters.
+- `mailAddr`: Follows general email address format, containing only digits, uppercase/lowercase letters, `@` and `.`, with a length not exceeding 30. (No need to verify email format validity)
+- `privilege`: User group priority level, an integer from 0 to 10.
 
-| Permission | Access Level | Purpose |
-|------------|--------------|---------|
-| **Administration** | Read and write | Create new repositories |
-| **Contents** | Read and write | Push code to repositories |
+#### Train Related
 
-> **Note:** If you encounter errors like `Resource not accessible by personal access token (createRepository)` or `Permission denied` when pushing, your token lacks the required permissions. Please verify and update your token.
+A train has the following attributes:
 
-### Logs Directory Permissions
+- `trainID`: The unique identifier of the train, a string starting with a letter and composed of letters, digits, and underscores, with a length not exceeding 20.
 
-The evaluation runs inside a Docker container with a different user (`agent`). The logs directory is mounted from the host, so you need to create it and ensure proper write permissions:
+- `stationNum`: The number of stations the train passes through, an integer greater than 1 and not exceeding 100.
 
+- `stations`: All station names the train passes through, `stationNum` items in total. Station names are composed of Chinese characters, not exceeding 10 characters.
+
+  Format: `station_1 station_2 station_3 ... station_stationNum`
+
+- `seatNum`: The number of seats on the train, an integer not exceeding 100000.
+
+- `prices`: Ticket prices between each pair of stations, `(stationNum - 1)` items in total. The `i`-th item represents the price from `station_i` to `station_(i+1)`, an integer not exceeding 100000.
+
+  Format: `price_1 price_2 price_3 ... price_(stationNum - 1)`
+  
+- `startTime`: The daily departure time of the train, in `hr:mi` format. For example: `23:51`.
+  
+- `travelTimes`: Travel time between each pair of stations (in minutes), `(stationNum - 1)` items in total, each being an integer not exceeding 10000.
+
+- `stopoverTimes`: Stopover time at each station (in minutes) except the starting and terminal stations, `(stationNum - 2)` items in total, each being an integer not exceeding 10000.
+  
+- `saleDate`: The sale date range (closed interval) of the train. Within this time range, the same train runs every day. 2 items in total, each being a day from June to August 2021, in `mm-dd` format. For example: `06-07`.
+  
+- `type`: Train type, a single uppercase letter.
+
+#### Commands
+
+Each command has a "usage frequency" parameter, representing its usage frequency in actual situations and its approximate proportion in stress tests. It is divided into the following levels, which you can use as a basis for designing algorithms.
+
+- SF: Super frequently used. (~1000000)
+- F: Frequently used. (~100000)
+- N: Normally used. (~10000)
+- R: Rarely used. (~100)
+
+Parameter format is `-<key> <argument>`, where `<key>` is a lowercase letter. To simplify the description, `<argument>` is omitted in the parameter list and referred to as `-<key>` in the description. Unless otherwise specified, each parameter is a string without spaces.
+
+The order of parameters in the parameter list is not restricted. Optional parameters can be omitted. Default values for optional parameters (if not empty) are provided in the description.
+
+The return value of a command is the execution result output to standard output in command-line interaction.
+
+- [N] `add_user`
+
+  - Parameter List
+
+    `-c -u -p -n -m -g`
+
+  - Description
+
+    The current user `<cur_username>` is `-c`, creating a user with `<username>` as `-u`, `<password>` as `-p`, `<name>` as `-n`, `<mailAddr>` as `-m`, and `<privilege>` as `-g`.
+
+    Permission requirement: `-c` is logged in, and the new user's privilege is lower than `-c`'s privilege.
+
+    Specially, when creating the first user, the new user's privilege is `10`, not subject to the above permission rules. Specifically, when creating the first user, ignore the `-c` and `-g` parameters and set the new user's priority to `10`.
+
+  - Return Value
+
+    Registration successful: `0`
+
+    Registration failed: `-1`
+
+- [F] `login`
+
+  - Parameter List
+
+    `-u -p`
+
+  - Description
+
+    Log in with `-u` as `<username>` and `-p` as `<password>`. If login is successful, add this user to the current user list. The current user list is empty when first entering the system.
+
+  - Return Value
+
+    Login successful: `0`
+
+    Login failed: `-1`
+  
+- [F] `logout`
+
+  - Parameter List
+
+    `-u`
+
+  - Description
+
+    The user with `<username>` as `-u` logs out. If logout is successful, remove this user from the current user list.
+
+  - Return Value
+
+    Logout successful: `0`
+
+    Logout failed: `-1`
+
+- [SF] `query_profile`
+
+  - Parameter List
+
+    `-c -u`
+
+  - Description
+
+    The user with `<username>` as `-c` queries the information of the user with `<username>` as `-u`.
+
+    Permission requirement: `-c` is logged in, and "the privilege of `-c` is greater than the privilege of `-u`, or `-c` and `-u` are the same".
+
+  - Return Value
+
+    Query successful: One line string, containing the queried user's `<username>`, `<name>`, `<mailAddr>`, and `<privilege>` in order, separated by spaces.
+
+    Query failed: `-1`
+
+- [F] `modify_profile`
+
+  - Parameter List
+
+    `-c -u (-p) (-n) (-m) (-g)`
+
+  - Description
+
+    The user with `<username>` as `-c` modifies the information of the user with `<username>` as `-u`. Modification parameters are the same as registration parameters, and all can be omitted.
+
+    Permission requirement: `-c` is logged in, and "the privilege of `-c` is greater than the privilege of `-u`, or `-c` and `-u` are the same", and `-g` must be lower than `-c`'s privilege.
+
+  - Return Value
+
+    Modification successful: Return the modified user's information, in the same format as `query_profile`.
+  
+    Modification failed: `-1`
+
+
+
+- [N] `add_train`
+  - Parameter List
+  
+    `-i -n -m -s -p -x -t -o -d -y`
+  
+  - Description
+  
+    Add a train with `<trainID>` as `-i`, `<stationNum>` as `-n`, `<seatNum>` as `-m`, `<stations>` as `-s`, `<prices>` as `-p`, `<startTime>` as `-x`, `<travelTimes>` as `-t`, `<stopoverTimes>` as `-o`, `<saleDate>` as `-d`, and `<type>` as `-y`.
+    
+    Since `-s`, `-p`, `-t`, `-o`, and `-d` consist of multiple values, separate two values with `|` when inputting (still a string without spaces).
+    
+  - Return Value
+  
+    Add successful: `0`
+  
+    Add failed: `-1`
+    
+  - Example:
+  
+    `> add_train -i HAPPY_TRAIN -n 3 -m 1000 -s 上院|中院|下院 -p 114|514 -x 19:19 -t 600|600 -o 5 -d 06-01|08-17 -y G`
+    
+    `0`
+  
+- [N] `release_train`
+
+  - Parameter List
+
+    `-i`
+
+  - Description
+
+    Release the train with `<trainID>` as `-i`. Trains before release can be deleted and tickets cannot be sold; trains after release cannot be deleted and tickets can be sold.
+
+  - Return Value
+
+    Release successful: `0`
+
+    Release failed: `-1`
+
+  - Example:
+
+    `> release_train -i HAPPY_TRAIN `
+
+    `0` 
+
+- [N] `query_train`
+
+  - Parameter List
+
+    `-i -d`
+
+  - Description
+
+    Query the situation of the train with `<trainID>` as `-i` departing on date `-d`, where `-d` is in `mm-dd` format.
+
+  - Return Value
+
+    Query successful: Output `(<stationNum> + 1)` lines in total.
+
+    The first line is `<trainID> <type>`
+
+    The next `<stationNum>` lines, the `i`-th line is `<stations[i]> <ARRIVING_TIME> -> <LEAVING_TIME> <PRICE> <SEAT>`, where `<ARRIVING_TIME>` and `<LEAVING_TIME>` are the absolute times the train arrives at and leaves this station, in `mm-dd hr:mi` format. `<PRICE>` is the cumulative ticket price from the starting station to this station, and `<SEAT>` is the number of remaining tickets from this station to the next station. For the arrival time at the starting station and the departure time at the terminal station, all digits are replaced with `x`; the remaining tickets at the terminal station are also replaced with `x`.
+    
+    Query failed: `-1`
+    
+  - Example
+
+    (Following the example of adding a train)
+
+    `> query_train -d 07-01 -i HAPPY_TRAIN`
+    
+    `HAPPY_TRAIN G`
+    
+    `上院 xx-xx xx:xx -> 07-01 19:19 0 1000`
+    
+    `中院 07-02 05:19 -> 07-02 05:24 114 1000`
+    
+    `下院 07-02 15:24 -> xx-xx xx:xx 628 x`
+
+- [N] `delete_train`
+
+  - Parameter List
+
+    `-i`
+
+  - Description
+
+    Delete the train with `<trainID>` as `-i`.
+
+  - Return Value
+
+    Delete successful: `0`
+
+    Delete failed: `-1`
+
+
+
+- [SF] `query_ticket`
+
+  - Parameter List
+
+    `-s -t -d (-p time)`
+
+  - Description
+
+    Query tickets departing from `-s` and arriving at `-t` on date `-d`. Note: This date is the date when the train departs from `-s`, not the date when the train departs from the starting station.
+    
+    The value of `-p` is one of `time` and `cost`. If it is `time`, the output is sorted by the time required for the train from smallest to largest; otherwise, it is sorted by ticket price from lowest to highest.
+
+  - Return Value
+
+    Query successful: The first line outputs an integer representing the number of trains that meet the requirements.
+
+    The following lines each output a train that meets the requirements, sorted as required. The format is `<trainID> <FROM> <LEAVING_TIME> -> <TO> <ARRIVING_TIME> <PRICE> <SEAT>`, where the departure time and arrival time formats are the same as `query_train`, `<FROM>` and `<TO>` are the departure and arrival stations, `<PRICE>` is the cumulative price, and `<SEAT>` is the maximum number of tickets that can be purchased.
+    
+    Query failed: `-1`
+
+  - Example
+
+    (Following the example of querying trains)
+
+    `> query_ticket -s 中院 -t 下院 -d 08-17`
+    
+    `1`
+    
+    `HAPPY_TRAIN 中院 08-17 05:24 -> 下院 08-17 15:24 514 1000`
+
+- [N] `query_transfer`
+
+  Parameter list and meaning are the same as `query_ticket`.
+
+  - Description
+
+    Query trains that meet the conditions in the case of exactly one transfer, only output the optimal solution.
+
+  - Return Value
+
+  	Query failed (no train meets the requirements): `0`
+  	
+  	Query successful: Output 2 lines, the two trains taken in the transfer, in the same format as `query_ticket`.
+
+- [SF] `buy_ticket`
+  
+  - Parameter List
+    `-u -i -d -n -f -t (-q false)`
+    
+  - Description
+    
+    The user with `<username>` as `-u` purchases: `<trainID>` as `-i`, date as `-d`, from station `-f` to station `-t`, `-n` tickets.
+    
+    `-q` can be `false` or `true`. If it is `true`, it means that in the case of **insufficient tickets**, willing to accept standby ticket purchase. When there are tickets available, it is **immediately** regarded as this user purchasing the ticket.
+    
+    Permission requirement: `-u` is logged in.
+    
+  - Return Value
+  
+    Purchase successful: An integer representing the total price of the order.
+    
+    Join standby: `queue`
+    
+    Purchase failed: `-1`
+    
+  - Example
+  
+    (Following the example of querying tickets, assuming users are logged in)
+  
+    `> buy_ticket -u Texas -i HAPPY_TRAIN -d 08-17 -n 800 -f 中院 -t 下院`
+  
+    `411200`
+  
+    `> buy_ticket -u Lappland -i HAPPY_TRAIN -d 08-16 -n 500 -f 上院 -t 下院 -q true`
+  
+    `queue`
+    
+  - Example Explanation
+  
+    User `Texas` purchased 800 train tickets departing from 中院 on 8.17. In the `add_train` operation above, the train departing from 上院 on 8.16 will arrive at 中院 on 8.17, so in fact the train `Lappland` is trying to buy tickets for is the same as `Texas`'s, so `Lappland` cannot buy 500 tickets.
+  
+- [F] `query_order`
+
+  - Parameter List
+
+    `-u`
+
+  - Description
+
+    Query all order information of the user with `<username>` as `-u`, sorted by transaction time from newest to oldest (even if a standby order is successfully ticketed, the transaction time is based on the time of placing the order).
+
+    Permission requirement: `-u` is logged in.
+
+  - Return Value
+
+    Query successful: The first line outputs an integer representing the number of orders.
+
+    The following lines each represent an order, in the format `[<STATUS>] <trainID> <FROM> <LEAVING_TIME> -> <TO> <ARRIVING_TIME> <PRICE> <NUM>`, where `<NUM>` is the number of tickets purchased, and `<STATUS>` represents the status of the order. Possible values are: `success` (ticket purchase successful), `pending` (in the standby ticket queue), and `refunded` (already refunded).
+    
+    Query failed: `-1`
+    
+  - Example
+
+    `> query_order -u Lappland`
+
+    `1`
+
+    `[pending] HAPPY_TRAIN 上院 08-17 05:24 -> 下院 08-17 15:24 628 500`
+
+- [N] `refund_ticket`
+
+  - Parameter List
+
+    `-u (-n 1)`
+
+  - Description
+
+    The user with `<username>` as `-u` refunds the `-n`-th order from newest to oldest (i.e., the return order of `query_order`).
+
+    Permission requirement: `-u` is logged in.
+
+  - Return Value
+
+    Refund successful: `0`
+
+    Refund failed: `-1`
+
+- [R] `clean`
+
+  - Parameter List
+
+    None
+
+  - Description
+
+    Clear all data.
+
+  - Return Value
+
+    `0`
+
+- [R] `exit`
+
+  - Parameter List
+
+    None
+
+  - Description
+
+    Exit the program, all online users log out.
+
+  - Return Value
+
+    `bye`
+
+
+## Q&A
+
+- Q: Are there trains that depart on different days?
+
+   A: Yes, and the sale date range refers to the date when **the train departs from the starting station**, while querying or purchasing tickets refers to the date when **the train departs from the boarding station**.
+
+- Q: Do I need to check if the **format** of various information is legal when reading?
+
+   A: No, the input format is guaranteed to be legal.
+
+- Q: Is the priority of the standby ticket queue that the first order is satisfied first, and if it cannot be satisfied, check if the next one can be satisfied?
+
+   A: Yes.
+
+- Q: Can users with the same privilege level modify each other?
+
+   A: No, see the `modify_profile` permission description (the privilege of `-c` is greater than the privilege of `-u`, or `-c` and `-u` are the same).
+
+- Q: If there are only 49 tickets left and you want to buy 50 tickets, will all 50 tickets in this order enter the standby queue?
+
+   A: Yes, orders are the minimum unit of ticket purchase and standby, and both will only be **fully satisfied**.
+
+- Q: When refunding the n-th order, is the serial number n the serial number including refunded orders?
+
+   A: Yes, it is equivalent to the n-th order output by `query_order`.
+
+- Q: Does `exit` really exit the program or just log out online users?
+
+   A: Exit the program and all online users log out.
+
+- Q: Does a train pass through a station multiple times?
+
+   A: No.
+
+- Q: Can a transfer be from the same train to the same train?
+
+   A: No.
+
+- Q: Does the optimal solution of `query_transfer` refer to the time optimal solution when `-p` is `time`, and the price optimal solution when `-p` is `cost`?
+
+    A: Yes.
+
+- Q: Should the train be displayed when there are no tickets available when querying tickets?
+
+    A: Yes.
+    
+- Q: Can trains be queried before release, and can they be queried and ticketed after release?
+
+    A: Before release, trains can: query trains, delete trains (no ticket query); after release, any operation except deleting trains can be performed.
+
+- Q: In the backend interface, multiple users are allowed to log in to the system. So in the frontend web implementation, should multiple users log in at the same time? Or according to the normal account convention, only one user can log in at a time?
+
+    A: Each frontend client can log in one user, and many frontends can be opened at the same time, and their login status can coexist (this is why the current user list is a set rather than a specific user).
+    For the backend, different frontends send commands with different `-c` or `-u`, so for a frontend, you only need to determine which [one] user is currently logged in, and tell the backend this information as the operator of the instruction.
+
+- Q: Is it required that `-c` is logged in when it is not the first user?
+
+    A: Yes, the privilege of the new user should be [lower than] the current user rather than [not higher than].
+
+- Q: Is there a limit on the number of stations a train passes through?
+
+    A: Yes, at least two stations (starting station and terminal station), and at most 100 stations.
+
+- Q: Is there a limit on the length of train running time?
+
+    A: Yes, no more than 3 days.
+
+- Q: When will `add_train` fail?
+
+    A: When there is a `trainID` conflict.
+
+- Q: Will adding a user fail if the id conflicts?
+
+    A: Yes.
+
+- Q: Is it guaranteed that all input (referring to the input of all operations) dates are a certain day from June to August 2021?
+
+    A: The time is guaranteed to be legal and within the 2021 range.
+
+- Q: Should the operation fail when `query_order` is executed when `-u` is not logged in?
+
+    A: Yes.
+
+- Q: What are the main forms of command failure?
+
+    A: Mainly key-value conflicts when adding, invalid input (such as the input station does not exist, etc.) or not meeting permission requirements.
+
+- Q: What is the return value when `query_ticket` and `query_order` fail?
+
+    A: `-1`
+
+- Q: Evaluation submission method?
+
+    A: Submit via git, and provide Makefile or CMakeLists.txt in the repository root directory.
+
+- Q: Is there a limit on the privilege that can be modified in `modify_profile`?
+
+    A: Yes, it needs to be lower than the privilege of `-c`.
+
+- Q: What does the time in `buy_ticket` refer to?
+
+    A: Consistent with the query, it refers to the boarding time rather than the time the train departs from the starting station.
+
+- Q: For trains with only two stations, what is the -o parameter?
+
+    A: The `-o` parameter content is an underscore (`-o _`)
+
+- Q: Will `query_ticket` fail?
+
+    A: No. If the station does not exist, it is not considered a query failure, but is considered to have no trains that meet the conditions, so it returns `0`.
+
+- Q: When querying tickets, if the time and ticket price are the same when sorting, what should I do?
+
+    A: Use `trainID` lexicographic order as the second sorting key. If `query_transfer` has tied results, try to choose the plan with less riding time on train 1 (the train passing through the starting station).
+
+- Q: If the number of tickets purchased is greater than the maximum number of seats on the train, can you still wait?
+
+    A: No.
+    
+- Q: Will repeated login fail?
+
+    A: Yes, return `-1`.
+    
+- Q: What is the ticket situation when `query_train` is executed before the train is released?
+
+    A: Before the train is released, `query_train` can find the corresponding ticket, and none of them have been sold.
+    
+- Q: Can you buy 0 tickets?
+
+    A: No.
+    
+- Q: Can the number of train seats be 0?
+
+    A: No.
+
+
+
+
+
+## Test Data
+
+Test data is located in the `./data/` directory. Note that this data may not be the evaluation data!
+
+## Per-Testcase Resource Limits
+
+- **Time Limit (per test case)**: 5000 ms (min), 40000 ms (max)
+- **Memory Limit (per test case)**: 42 MiB (min), 47 MiB (max)
+- **Disk Usage**: 366 MiB (min), 488 MiB (max)
+- **File Count Limit**: 20 files
+
+## Submission Requirements
+
+### OJ Git Repository Compilation Process
+
+For Git compilation, we will first clone the repository using a command similar to:
 ```bash
-# Create and set permissions for the logs directory (run from project root)
-mkdir -p logs
-chmod -R 777 logs/
+git clone <repo_url> . --depth 1 --recurse-submodules --shallow-submodules --no-local
 ```
 
-Or the script will automatically set `chmod 777` on the log directory during evaluation. If you encounter `Permission denied` errors when writing logs, manually run the above commands.
-
-### Installation
-
-1. **Clone the repository**
+Then we check if there is a `CMakeLists.txt` file. If it exists, we run (if not, a warning message will be displayed):
 ```bash
-git clone https://github.com/your-username/projdevbench.git
-cd projdevbench
+cmake .
 ```
 
-2. **Configure environment variables**
+Finally, we check if there is any of `GNUmakefile`/`makefile`/`Makefile` (if cmake was run previously, this will be the generated Makefile). If it exists, we run (if not, a warning message will be displayed):
 ```bash
-vim config/environment.env
+make
 ```
 
-Required variables:
-```bash
-# GitHub (recommend creating a dedicated account for experiments)
-# Create token at: https://github.com/settings/tokens
-GITHUB_USER="your_username"
-GITHUB_TOKEN="your_github_token"
+After this process is complete, we will use the `code` file in the project root directory as the compilation result.
 
-# ACMOJ (https://acm.sjtu.edu.cn/OnlineJudge)
-# Create API token at: https://acm.sjtu.edu.cn/OnlineJudge/settings/api
-# For registration, use student ID: 123456123456
-ACMOJ_TOKEN="your_acmoj_token"
+The project does not provide a CMakeLists.txt file, so you need to create and edit it yourself. The local environment has gcc-13 and g++-13 available.
 
-# Agent-specific (configure as needed)
-GEMINI_API_KEY="your_gemini_key"
-CURSOR_API_KEY="your_cursor_key"
-ANTHROPIC_AUTH_TOKEN="your_anthropic_token"
-OPENAI_API_KEY="your_openai_key"
-AUGMENT_SESSION_AUTH="your_augment_auth"
+### Git Configuration Requirements
+
+**IMPORTANT**: You must create a `.gitignore` file in your project root directory to avoid OJ evaluation conflicts.
+
+The `.gitignore` file should include at least the following entries:
+
+```gitignore
+CMakeFiles/
+CMakeCache.txt
 ```
 
-Optional variables (for custom API endpoints):
-```bash
-# Custom Base URLs (useful for proxies or self-hosted services)
-OPENAI_BASE_URL="https://api.openai.com/v1"          # OpenAI API base URL
-ANTHROPIC_BASE_URL="https://api.anthropic.com"       # Anthropic API base URL
-GOOGLE_GEMINI_BASE_URL=""                            # Gemini API base URL
+### Submission Guidelines
 
-# Codex CLI (default: OpenAI official https://api.openai.com/v1)
-# For OpenRouter: CODEX_BASE_URL="https://openrouter.ai/api/v1"
-CODEX_API_KEY="your_codex_api_key"                   # Codex API key
-CODEX_BASE_URL=""                                    # Default: OpenAI official
+- The submitted code must be able to compile successfully through the above compilation process
+- The compiled executable file name must be `code`
+- The program needs to be able to read data from standard input and write results to standard output
+- Please ensure the code runs correctly within the given time and space limits
+- **You must use C++ language** to implement this assignment
+- Cannot use external libraries
+- Cannot use STL containers (except `std::string`)
+- Cannot use `algorithm` library
 
-# Proxy Configuration (if needed)
-# https_proxy="http://host.docker.internal:7890"
-# http_proxy="http://host.docker.internal:7890"
-```
+### Evaluation Notes
 
-3. **Build Docker images**
-```bash
-# Build base image
-cd docker/base && docker build -t projdevbench-base:latest .
+- The evaluation system will test your program using the provided test data
+- The program output must exactly match the expected output (including format)
+- Exceeding time or memory limits will be judged as the corresponding error type
+- Please pay attention to the overall time performance of your code and the time complexity of each part of your algorithm
 
-# Build runner image (from project root)
-cd ../..
-docker build -t projdevbench-runner:latest -f docker/agent-runner/Dockerfile .
-```
+### Academic Integrity
 
-## Supported Agents
-
-| Agent | Description | Required Config |
-|-------|-------------|-----------------|
-| **gemini-cli** | Google Gemini CLI | `GEMINI_API_KEY` |
-| **cursor** | Cursor AI Editor | `CURSOR_API_KEY` |
-| **claude-code** | Anthropic Claude Code | `ANTHROPIC_AUTH_TOKEN` |
-| **codex** | OpenAI Codex CLI | `OPENAI_API_KEY` |
-| **augment** | Augment Code | `AUGMENT_SESSION_AUTH` |
-| **copilot** | GitHub Copilot CLI | GitHub OAuth |
-
-> **Copilot Note:** To run the Copilot agent, your `GITHUB_TOKEN` must have Copilot permissions enabled. Ensure your GitHub account has an active Copilot subscription and the token is authorized to access Copilot.
-
-## Usage
-
-### Run Evaluation
-
-```bash
-# Interactive mode - select agent, model, and problems interactively
-./scripts/run_all_problem.sh
-
-# With environment variables
-AGENT=cursor MODEL=gemini-3-pro ./scripts/run_all_problem.sh
-
-# Specify problems to run
-PROBLEMS="001,002,003" AGENT=claude-code MODEL=sonnet-4.5 ./scripts/run_all_problem.sh
-```
-
-### Parallel Execution
-
-Run multiple evaluations concurrently using the `CONCURRENCY` environment variable:
-
-```bash
-# Run 4 problems in parallel
-AGENT=cursor MODEL=auto CONCURRENCY=4 ./scripts/run_all_problem.sh
-
-# Run specific problems in parallel, skip existing logs
-PROBLEMS="001,002,003,004,005" AGENT=codex MODEL=gpt-5 CONCURRENCY=4 SKIP_EXISTING=true ./scripts/run_all_problem.sh
-
-# Force re-run all problems in parallel
-AGENT=cursor MODEL=auto CONCURRENCY=4 FORCE=true ./scripts/run_all_problem.sh
-```
-
-**Environment Variables:**
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AGENT` | Agent type (cursor, claude-code, codex, etc.) | - |
-| `MODEL` | Model name (auto, gpt-5, sonnet-4.5, etc.) | - |
-| `PROBLEMS` | Comma-separated problem IDs (e.g., "001,002,003") | All problems |
-| `CONCURRENCY` | Number of parallel jobs | 1 (sequential) |
-| `SKIP_EXISTING` | Skip problems with existing logs | false |
-| `FORCE` | Force re-run problems with existing logs | false |
-
-## Evaluation Protocol
-
-### Execution-based Evaluation
-- Submissions are evaluated on an Online Judge platform
-- Test cases verify functional correctness, edge-case handling, and resource limits
-- Fine-grained diagnostic feedback: Compile Error, Runtime Error, Wrong Answer, TLE, MLE, Memory Leak
-
-### Code Review
-- Rule-based Python scripts for explicit constraint violations
-- LLM-based review for specification compliance
-- Detects forbidden library usage, hack solutions, and rule violations
-
-### Final Scoring
-```
-Final Score = 0.8 × Execution Score + 0.2 × Code Review Score
-```
-
-## Key Findings
-
-From our evaluation of 6 coding agents across multiple LLM backends:
-
-| Submission Status | Percentage |
-|-------------------|------------|
-| Accepted | 27.38% |
-| Wrong Answer | 41.86% |
-| Time Limit Exceeded | 13.91% |
-| Runtime Error | 7.01% |
-| Compile Error | 4.52% |
-| Memory Leak | 3.51% |
-| Memory Limit Exceeded | 1.36% |
-
-**Top Performing Configurations**:
-- Codex + GPT-5: 77.85% final score
-- Cursor + Gemini-3-Pro-Preview: 75.32% final score
-- Augment + GPT-5: 72.35% final score
-
-## Result Analysis
-
-### Execution Score Analysis
-
-Run the following script to analyze OJ execution results and calculate scores:
-
-```bash
-# Run from project root
-python3 scripts/analyze/analyze_exec_score.py
-```
-
-This script will:
-1. Scan the `logs/` directory and extract all submission records
-2. Call ACMOJ API to get detailed information for each submission (status, score, etc.)
-3. Filter out submissions exceeding `max_submissions` limit defined in `problem_registry.json`
-4. Calculate final score using weighted formula: `final_score = Σ(score/full_score × weight) / total_weight × 100`
-5. Save results to the `results/` directory
-
-**Output Files:**
-```
-results/
-├── exec_results.json          # Raw submission data
-├── exec_results.csv           # Raw submission data (CSV)
-├── exec_score_analysis.json   # Score analysis (weighted calculation)
-├── exec_score_analysis.csv    # Score matrix
-└── exec_score_summary.txt     # Human-readable summary
-```
-
-**Notes:**
-- Requires `ACMOJ_TOKEN` configured in `config/environment.env`
-- Submissions with `abort` status are not counted towards submission limit
-- Submissions exceeding `max_submissions` limit are excluded from scoring
-
-### Code Review Score Analysis
-
-Run the following script to analyze Code Review results:
-
-```bash
-# Run from project root
-python3 scripts/analyze/analyze_cr_score.py
-
-# Specify CR result directory
-python3 scripts/analyze/analyze_cr_score.py --cr-result-root /path/to/cr_result
-```
-
-This script will:
-1. Scan the `cr_result/` directory and read all `all_result.json` files
-2. Aggregate CR scores for each agent+model combination
-3. Calculate statistics (average, min, max scores, etc.)
-4. Save results to the `results/` directory
-
-**Output Files:**
-```
-results/
-├── cr_score_analysis.json    # CR score analysis
-├── cr_score_analysis.csv     # CR score matrix
-├── cr_score_detail.csv       # CR detailed data (with commit count, etc.)
-└── cr_score_summary.txt      # Human-readable summary
-```
-
-### Combined Score Analysis
-
-Run the following script to calculate combined scores (Execution + CR):
-
-```bash
-# Run from project root (default: 0.8×Exec + 0.2×CR)
-python3 scripts/analyze/analyze_all_score.py
-
-# Custom weights
-python3 scripts/analyze/analyze_all_score.py --exec-weight 0.7 --cr-weight 0.3
-```
-
-This script will:
-1. Read `results/exec_score_analysis.json` (execution scores)
-2. Read `results/cr_score_analysis.json` (CR scores)
-3. Calculate combined score: `all_score = 0.8 × exec_score + 0.2 × cr_score`
-4. Save results to the `results/` directory
-
-**Output Files:**
-```
-results/
-├── all_score_analysis.json   # Combined score analysis
-├── all_score_analysis.csv    # Combined score matrix
-├── all_score_detail.csv      # Detailed data (exec, cr, all scores)
-└── all_score_summary.txt     # Human-readable summary
-```
-
-**Notes:**
-- Requires running `analyze_exec_score.py` and `analyze_cr_score.py` first to generate input data
-- If a problem only has execution score or only has CR score, it will be calculated based on the available score
-
-## Adding New Agents
-
-1. Create agent script in `scripts/container/run_new_agent.sh`
-2. Install CLI tools in `docker/base/Dockerfile`
-3. Add case branch in `scripts/run_evaluation.sh`
-4. Update `config/agent_model_config.json`
-
-## Logs
-
-Logs are saved to `logs/[agent]/[model]/[problem_id]/`:
-```
-oj_eval_[agent]_[model]_[problem_id]_[timestamp].log
-```
-
-Contains:
-- Environment configuration
-- GitHub repository creation
-- Agent execution trace
-- OJ submission results
-- Submission IDs
-
-## License
-
-MIT License
-
-## Citation
-
-If you use ProjDevBench in your research, please cite:
-
-```bibtex
-@misc{lu2026projdevbenchbenchmarkingaicoding,
-      title={ProjDevBench: Benchmarking AI Coding Agents on End-to-End Project Development}, 
-      author={Pengrui Lu and Shiqi Zhang and Yunzhong Hou and Lyumanshan Ye and Chaoyi Huang and Zixi Chen and Ji Zeng and Hantao Jiang and Pengfei Liu and Yiwei Wang and Ming-Hsuan Yang},
-      year={2026},
-      eprint={2602.01655},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2602.01655}, 
-}
-```
-
-## Acknowledgments
-
-We thank the OJ platform for providing the evaluation infrastructure and the developers of the coding agents evaluated in this work.
+If any violations are found during evaluation or code review (including but not limited to using unconventional methods to pass test cases), your final score may be significantly reduced or become **0 points**.

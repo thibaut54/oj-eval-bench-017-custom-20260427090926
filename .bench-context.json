@@ -1,0 +1,10 @@
+{
+  "effort": "high",
+  "acmoj_problem_id": "1170",
+  "problem_id": "017",
+  "timestamp": "20260427090945",
+  "max_submissions": 6,
+  "problem_name": "Train Ticket Management System",
+  "model": "claude-opus-4-7",
+  "branch": "bench/017-vanilla-20260427090945"
+}
