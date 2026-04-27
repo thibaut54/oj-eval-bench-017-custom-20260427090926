@@ -41,7 +41,7 @@ class ACMOJClient:
             "User-Agent": "ACMOJ-Python-Client/2.2"
         }
 
-        self.submission_log_file = '/workspace/submission_ids.log'
+        self.submission_log_file = os.environ.get('SUBMISSION_LOG_FILE') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'submission_ids.log')
         
 
     def _make_request(self, method: str, endpoint: str, data: Dict[str, Any] = None, 
@@ -85,7 +85,10 @@ class ACMOJClient:
             
             print(f"✅ Submission ID {submission_id} saved to {self.submission_log_file}")
         except Exception as e:
-            print(f"⚠️ Warning: Failed to save submission ID: {e}")
+            try:
+                print(f"Warning: Failed to save submission ID: {e}")
+            except Exception:
+                pass
 
     def submit_git(self, problem_id: int, git_url: str) -> Optional[Dict]:
         data = {"language": "git", "code": git_url}

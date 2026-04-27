@@ -1,5 +1,5 @@
-// Train Ticket Management System
-// In-memory implementation. No STL containers. std::string only.
+// Train Ticket Management System with persistence
+// In-memory ops + binary save/load on startup/exit. No STL containers (std::string only).
 
 #include <cstdio>
 #include <cstring>
@@ -7,14 +7,17 @@
 #include <cstdint>
 #include <string>
 
-// =================== Helpers: parsing ===================
+#define STATE_FILE "state.bin"
 
-static inline bool is_space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+// ===== misc =====
+static int my_strcmp(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return (unsigned char)*a - (unsigned char)*b;
+}
 
-// Read a line into buf. Returns -1 on EOF.
+// ===== I/O =====
 static int read_line(char *buf, int max_len) {
-    int n = 0;
-    int c;
+    int n = 0; int c;
     while ((c = getchar_unlocked()) != EOF && c != '\n') {
         if (n + 1 < max_len) buf[n++] = (char)c;
     }
@@ -23,100 +26,127 @@ static int read_line(char *buf, int max_len) {
     return n;
 }
 
-// Tokenize args. After read_line, parse params -X value pairs.
-// We'll just store positional in a generic parse function.
+// ===== date/time =====
+static int days_in_month_table[13] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
 
-// =================== Custom string compare ===================
-static int my_strcmp(const char *a, const char *b) {
-    while (*a && *a == *b) { a++; b++; }
-    return (unsigned char)*a - (unsigned char)*b;
-}
-
-// =================== Date handling ===================
-// Dates are mm-dd in 2021. Range: June 1 to Aug 31. We use day-of-year offset from June 1.
-// June=30 days, July=31, August=31. Total 92 days. Index 0..91.
-// Trains can run up to 3 days, so we allow indices up to 91+3=94 for arrival times.
-static int days_in_month_table[13] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-
-// Convert "mm-dd" to day index from June 1.
 static int parse_date(const char *s) {
-    int m = (s[0] - '0') * 10 + (s[1] - '0');
-    int d = (s[3] - '0') * 10 + (s[4] - '0');
+    int m = (s[0]-'0')*10 + (s[1]-'0');
+    int d = (s[3]-'0')*10 + (s[4]-'0');
     int day = 0;
-    // Sum days from June 1 (month 6, day 1) to (m, d)
-    if (m < 6) {
-        // Should not happen per spec
-        return -1;
-    }
+    if (m < 6) return -1;
     for (int i = 6; i < m; i++) day += days_in_month_table[i];
     day += (d - 1);
     return day;
 }
-
-// Convert day index from June 1 to mm-dd
 static void format_date(int day, char *out) {
     int m = 6, d = day + 1;
     while (d > days_in_month_table[m]) { d -= days_in_month_table[m]; m++; }
-    out[0] = '0' + m / 10;
-    out[1] = '0' + m % 10;
-    out[2] = '-';
-    out[3] = '0' + d / 10;
-    out[4] = '0' + d % 10;
-    out[5] = 0;
+    out[0]='0'+m/10; out[1]='0'+m%10; out[2]='-';
+    out[3]='0'+d/10; out[4]='0'+d%10; out[5]=0;
 }
-
-// Time = hr:mi -> minutes from midnight (0..1439)
 static int parse_time(const char *s) {
-    int h = (s[0] - '0') * 10 + (s[1] - '0');
-    int m = (s[3] - '0') * 10 + (s[4] - '0');
-    return h * 60 + m;
+    int h = (s[0]-'0')*10 + (s[1]-'0');
+    int m = (s[3]-'0')*10 + (s[4]-'0');
+    return h*60 + m;
 }
-
-// Format absolute time: total_minutes from June 1 00:00 -> "mm-dd hr:mi"
 static void format_datetime(int total_minutes, char *out) {
     int day = total_minutes / 1440;
     int min_in_day = total_minutes % 1440;
     int h = min_in_day / 60;
     int mn = min_in_day % 60;
-    char db[8];
-    format_date(day, db);
-    out[0] = db[0]; out[1] = db[1]; out[2] = db[2]; out[3] = db[3]; out[4] = db[4];
-    out[5] = ' ';
-    out[6] = '0' + h / 10;
-    out[7] = '0' + h % 10;
-    out[8] = ':';
-    out[9] = '0' + mn / 10;
-    out[10] = '0' + mn % 10;
-    out[11] = 0;
+    char db[8]; format_date(day, db);
+    out[0]=db[0]; out[1]=db[1]; out[2]=db[2]; out[3]=db[3]; out[4]=db[4];
+    out[5]=' ';
+    out[6]='0'+h/10; out[7]='0'+h%10;
+    out[8]=':';
+    out[9]='0'+mn/10; out[10]='0'+mn%10;
+    out[11]=0;
 }
 
-// =================== Hash function ===================
+// ===== hash =====
 static uint32_t hash_str(const char *s) {
     uint32_t h = 2166136261u;
     while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
     return h;
 }
 
-// =================== User ===================
+// ===== User =====
 struct User {
     char username[24];
     char password[36];
-    char name[24]; // up to 5 Chinese chars (15 bytes UTF-8) + null
+    char name[24];
     char mailAddr[36];
     int privilege;
     bool used;
 };
 
-// =================== Hash map (open addressing) for users ===================
-// Capacity power of 2, linear probing. Keys = username string.
+// ===== Station name =====
+struct StationName { char s[34]; };
+
+// ===== Train =====
+struct Train {
+    char trainID[24];
+    int stationNum;
+    int seatNum;
+    StationName stations[100];
+    int prices[100];
+    int startTime;
+    int leaveTimes[100];
+    int arriveTimes[100];
+    int saleStart;
+    int saleEnd;
+    char type;
+    bool released;
+    bool used;
+    int *seats; // runtime pointer; days*segs ints
+};
+
+// ===== Order =====
+enum OrderStatus { OS_SUCCESS = 0, OS_PENDING = 1, OS_REFUNDED = 2 };
+struct Order {
+    char trainID[24];
+    char fromStation[34];
+    char toStation[34];
+    int from_idx, to_idx;
+    int day;
+    int num;
+    int price;
+    int leave_time;
+    int arrive_time;
+    int status;
+    long long timestamp;
+    char username[24];
+    int user_prev_id;   // -1 if none
+    int user_next_id;
+    int queue_next_id;
+};
+
+// ===== Globals =====
+static Order *g_orders = nullptr;
+static int g_orders_count = 0;
+static int g_orders_cap = 0;
+static long long g_timestamp = 0;
+
+static int new_order_slot() {
+    if (g_orders_count == g_orders_cap) {
+        int nc = g_orders_cap ? g_orders_cap * 2 : 1024;
+        Order *no = new Order[nc];
+        if (g_orders_count > 0) memcpy(no, g_orders, sizeof(Order) * g_orders_count);
+        delete[] g_orders;
+        g_orders = no;
+        g_orders_cap = nc;
+    }
+    return g_orders_count++;
+}
+
+// ===== UserMap (hash map) =====
 struct UserMap {
     int cap;
     int count;
-    User *items; // items[i].used means slot occupied
+    User *items;
     UserMap() : cap(0), count(0), items(nullptr) {}
     void init(int capacity) {
-        cap = capacity;
-        count = 0;
+        cap = capacity; count = 0;
         items = new User[cap];
         for (int i = 0; i < cap; i++) items[i].used = false;
     }
@@ -127,11 +157,7 @@ struct UserMap {
         items = new User[cap];
         for (int i = 0; i < cap; i++) items[i].used = false;
         count = 0;
-        for (int i = 0; i < oldcap; i++) {
-            if (old[i].used) {
-                insert_internal(old[i]);
-            }
-        }
+        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
         delete[] old;
     }
     int find_slot(const char *key) const {
@@ -146,8 +172,7 @@ struct UserMap {
     }
     User *get(const char *key) {
         int s = find_slot(key);
-        if (s < 0) return nullptr;
-        return &items[s];
+        return s < 0 ? nullptr : &items[s];
     }
     void insert_internal(const User &u) {
         uint32_t h = hash_str(u.username);
@@ -166,46 +191,14 @@ struct UserMap {
     }
 };
 
-// =================== Logged-in users ===================
-// Track by adding a flag in User. We can store in User struct, but rehash would lose state.
-// Better: keep "logged in" as a separate hash set. Or just add bool to User.
-// Adding bool to User. But after rehash, items get copied; bool is preserved. Good.
-
-// Add login flag to User struct - but we already have only the fields... let me rework.
-// Re-define User with login flag.
-// Actually I need to redo. Let me restart the struct...
-
-// =================== Train ===================
-// Stations: array of fixed-size strings (UTF-8 up to ~30 bytes).
-// stationNum up to 100.
-struct StationName { char s[34]; }; // up to 10 Chinese chars (30 bytes) + null
-struct Train {
-    char trainID[24];
-    int stationNum;
-    int seatNum;
-    StationName stations[100];
-    int prices[100];           // prefix sums of prices: prices[0]=0, prices[i]=cum price to station i
-    int startTime;             // minutes from midnight
-    int leaveTimes[100];       // minutes after train start: leaveTimes[i] = minutes from start to leave station i
-    int arriveTimes[100];      // minutes from start to arrive at station i (== leaveTimes[i-1] + travel[i-1])
-    int saleStart;             // day index
-    int saleEnd;               // day index (inclusive)
-    char type;
-    bool released;
-    bool used;
-    // Seats: 2D array [date_count][seg_count] - allocated only after release
-    // date_count = saleEnd - saleStart + 1, seg_count = stationNum - 1
-    int *seats;
-};
-
+// ===== TrainMap =====
 struct TrainMap {
     int cap;
     int count;
     Train *items;
     TrainMap() : cap(0), count(0), items(nullptr) {}
     void init(int capacity) {
-        cap = capacity;
-        count = 0;
+        cap = capacity; count = 0;
         items = new Train[cap];
         for (int i = 0; i < cap; i++) { items[i].used = false; items[i].seats = nullptr; }
     }
@@ -216,12 +209,7 @@ struct TrainMap {
         items = new Train[cap];
         for (int i = 0; i < cap; i++) { items[i].used = false; items[i].seats = nullptr; }
         count = 0;
-        for (int i = 0; i < oldcap; i++) {
-            if (old[i].used) {
-                insert_internal(old[i]);
-            }
-        }
-        // We moved seats pointers; do not delete them.
+        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
         delete[] old;
     }
     int find_slot(const char *key) const {
@@ -236,8 +224,7 @@ struct TrainMap {
     }
     Train *get(const char *key) {
         int s = find_slot(key);
-        if (s < 0) return nullptr;
-        return &items[s];
+        return s < 0 ? nullptr : &items[s];
     }
     void insert_internal(const Train &t) {
         uint32_t h = hash_str(t.trainID);
@@ -260,7 +247,6 @@ struct TrainMap {
         if (items[s].seats) { delete[] items[s].seats; items[s].seats = nullptr; }
         items[s].used = false;
         count--;
-        // Re-insert subsequent entries in the cluster
         int mask = cap - 1;
         int i = (s + 1) & mask;
         while (items[i].used) {
@@ -274,13 +260,8 @@ struct TrainMap {
     }
 };
 
-// =================== Station -> trains-passing-through index ===================
-// For query_ticket / query_transfer, we need trains by station.
-// We map station-name string to a dynamic list of (trainID, station-index-in-train).
-struct StationEntry {
-    char trainID[24];
-    int station_idx;
-};
+// ===== StationMap (station name -> list of (trainID, idx)) =====
+struct StationEntry { char trainID[24]; int station_idx; };
 struct StationTrains {
     StationName name;
     StationEntry *list;
@@ -294,8 +275,7 @@ struct StationMap {
     StationTrains *items;
     StationMap() : cap(0), count(0), items(nullptr) {}
     void init(int capacity) {
-        cap = capacity;
-        count = 0;
+        cap = capacity; count = 0;
         items = new StationTrains[cap];
         for (int i = 0; i < cap; i++) { items[i].used = false; items[i].list = nullptr; items[i].len = 0; items[i].cap = 0; }
     }
@@ -306,11 +286,7 @@ struct StationMap {
         items = new StationTrains[cap];
         for (int i = 0; i < cap; i++) { items[i].used = false; items[i].list = nullptr; items[i].len = 0; items[i].cap = 0; }
         count = 0;
-        for (int i = 0; i < oldcap; i++) {
-            if (old[i].used) {
-                insert_internal(old[i]);
-            }
-        }
+        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
         delete[] old;
     }
     int find_slot(const char *key) const {
@@ -323,6 +299,10 @@ struct StationMap {
         }
         return -1;
     }
+    StationTrains *find(const char *key) {
+        int s = find_slot(key);
+        return s < 0 ? nullptr : &items[s];
+    }
     StationTrains *get_or_create(const char *key) {
         if ((count + 1) * 2 > cap) rehash();
         uint32_t h = hash_str(key);
@@ -332,20 +312,13 @@ struct StationMap {
             if (my_strcmp(items[i].name.s, key) == 0) return &items[i];
             i = (i + 1) & mask;
         }
-        // Create new
         items[i].used = true;
-        strncpy(items[i].name.s, key, 33);
-        items[i].name.s[33] = 0;
+        strncpy(items[i].name.s, key, 33); items[i].name.s[33] = 0;
         items[i].len = 0;
         items[i].cap = 4;
         items[i].list = new StationEntry[4];
         count++;
         return &items[i];
-    }
-    StationTrains *find(const char *key) {
-        int s = find_slot(key);
-        if (s < 0) return nullptr;
-        return &items[s];
     }
     void insert_internal(const StationTrains &st) {
         uint32_t h = hash_str(st.name.s);
@@ -367,45 +340,160 @@ static void station_add_train(StationTrains *st, const char *trainID, int idx) {
         st->list = nl;
         st->cap = nc;
     }
-    strncpy(st->list[st->len].trainID, trainID, 23);
-    st->list[st->len].trainID[23] = 0;
+    strncpy(st->list[st->len].trainID, trainID, 23); st->list[st->len].trainID[23] = 0;
     st->list[st->len].station_idx = idx;
     st->len++;
 }
 
-// =================== Orders ===================
-// Per-user order list, doubly linked list (newest first).
-// Order also referenced by per-train pending queue when status=pending.
-enum OrderStatus { OS_SUCCESS = 0, OS_PENDING = 1, OS_REFUNDED = 2 };
-struct Order {
-    char trainID[24];
-    char fromStation[34];
-    char toStation[34];
-    int from_idx;
-    int to_idx;
-    int day;          // train start day from June 1
-    int num;          // tickets count
-    int price;        // per ticket
-    int leave_time;   // absolute minutes from June 1 00:00
-    int arrive_time;  // absolute minutes from June 1 00:00
-    int status;       // OrderStatus
-    long long timestamp; // monotonic increment
-    char username[24]; // owner
-    Order *user_prev; // newer order
-    Order *user_next; // older order
-    Order *queue_next; // for per-train-day pending queue
+// ===== UserOrderMap: username -> head (order index, -1 = none) =====
+struct UserOrderHead {
+    char username[24];
+    int head_id; // newest first
+    bool used;
+};
+struct UserOrderMap {
+    int cap;
+    int count;
+    UserOrderHead *items;
+    UserOrderMap() : cap(0), count(0), items(nullptr) {}
+    void init(int capacity) {
+        cap = capacity; count = 0;
+        items = new UserOrderHead[cap];
+        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head_id = -1; }
+    }
+    void rehash() {
+        int oldcap = cap;
+        UserOrderHead *old = items;
+        cap *= 2;
+        items = new UserOrderHead[cap];
+        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head_id = -1; }
+        count = 0;
+        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
+        delete[] old;
+    }
+    int find_slot(const char *key) const {
+        uint32_t h = hash_str(key);
+        int mask = cap - 1;
+        int i = h & mask;
+        while (items[i].used) {
+            if (my_strcmp(items[i].username, key) == 0) return i;
+            i = (i + 1) & mask;
+        }
+        return -1;
+    }
+    UserOrderHead *find(const char *key) {
+        int s = find_slot(key);
+        return s < 0 ? nullptr : &items[s];
+    }
+    UserOrderHead *get_or_create(const char *key) {
+        if ((count + 1) * 2 > cap) rehash();
+        uint32_t h = hash_str(key);
+        int mask = cap - 1;
+        int i = h & mask;
+        while (items[i].used) {
+            if (my_strcmp(items[i].username, key) == 0) return &items[i];
+            i = (i + 1) & mask;
+        }
+        items[i].used = true;
+        strncpy(items[i].username, key, 23); items[i].username[23] = 0;
+        items[i].head_id = -1;
+        count++;
+        return &items[i];
+    }
+    void insert_internal(const UserOrderHead &h) {
+        uint32_t hv = hash_str(h.username);
+        int mask = cap - 1;
+        int i = hv & mask;
+        while (items[i].used) i = (i + 1) & mask;
+        items[i] = h;
+        items[i].used = true;
+        count++;
+    }
 };
 
-// =================== Logged-in set ===================
-// Using a separate hash set keyed by username.
+// ===== PendingMap: (trainID, day) -> queue of order ids =====
+struct PendingHead {
+    char trainID[24];
+    int day;
+    int head_id;
+    int tail_id;
+    bool used;
+};
+struct PendingMap {
+    int cap;
+    int count;
+    PendingHead *items;
+    PendingMap() : cap(0), count(0), items(nullptr) {}
+    static uint32_t key_hash(const char *t, int d) {
+        uint32_t h = hash_str(t);
+        h ^= (uint32_t)d * 2654435761u;
+        return h;
+    }
+    void init(int capacity) {
+        cap = capacity; count = 0;
+        items = new PendingHead[cap];
+        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head_id = -1; items[i].tail_id = -1; }
+    }
+    void rehash() {
+        int oldcap = cap;
+        PendingHead *old = items;
+        cap *= 2;
+        items = new PendingHead[cap];
+        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head_id = -1; items[i].tail_id = -1; }
+        count = 0;
+        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
+        delete[] old;
+    }
+    int find_slot(const char *t, int d) const {
+        uint32_t h = key_hash(t, d);
+        int mask = cap - 1;
+        int i = h & mask;
+        while (items[i].used) {
+            if (items[i].day == d && my_strcmp(items[i].trainID, t) == 0) return i;
+            i = (i + 1) & mask;
+        }
+        return -1;
+    }
+    PendingHead *find(const char *t, int d) {
+        int s = find_slot(t, d);
+        return s < 0 ? nullptr : &items[s];
+    }
+    PendingHead *get_or_create(const char *t, int d) {
+        if ((count + 1) * 2 > cap) rehash();
+        uint32_t h = key_hash(t, d);
+        int mask = cap - 1;
+        int i = h & mask;
+        while (items[i].used) {
+            if (items[i].day == d && my_strcmp(items[i].trainID, t) == 0) return &items[i];
+            i = (i + 1) & mask;
+        }
+        items[i].used = true;
+        strncpy(items[i].trainID, t, 23); items[i].trainID[23] = 0;
+        items[i].day = d;
+        items[i].head_id = -1;
+        items[i].tail_id = -1;
+        count++;
+        return &items[i];
+    }
+    void insert_internal(const PendingHead &h) {
+        uint32_t hv = key_hash(h.trainID, h.day);
+        int mask = cap - 1;
+        int i = hv & mask;
+        while (items[i].used) i = (i + 1) & mask;
+        items[i] = h;
+        items[i].used = true;
+        count++;
+    }
+};
+
+// ===== LoginSet (transient — not persisted) =====
 struct LoginSet {
     int cap;
     int count;
-    char (*items)[24]; // item[0]=='\0' means empty
+    char (*items)[24];
     LoginSet() : cap(0), count(0), items(nullptr) {}
     void init(int capacity) {
-        cap = capacity;
-        count = 0;
+        cap = capacity; count = 0;
         items = new char[cap][24];
         for (int i = 0; i < cap; i++) items[i][0] = 0;
     }
@@ -416,9 +504,7 @@ struct LoginSet {
         items = new char[cap][24];
         for (int i = 0; i < cap; i++) items[i][0] = 0;
         count = 0;
-        for (int i = 0; i < oldcap; i++) {
-            if (old[i][0]) insert(old[i]);
-        }
+        for (int i = 0; i < oldcap; i++) if (old[i][0]) insert(old[i]);
         delete[] old;
     }
     int find_slot(const char *k) const {
@@ -441,8 +527,7 @@ struct LoginSet {
             if (my_strcmp(items[i], k) == 0) return false;
             i = (i + 1) & mask;
         }
-        strncpy(items[i], k, 23);
-        items[i][23] = 0;
+        strncpy(items[i], k, 23); items[i][23] = 0;
         count++;
         return true;
     }
@@ -454,8 +539,7 @@ struct LoginSet {
         int mask = cap - 1;
         int i = (s + 1) & mask;
         while (items[i][0]) {
-            char tmp[24];
-            strncpy(tmp, items[i], 24);
+            char tmp[24]; strncpy(tmp, items[i], 24);
             items[i][0] = 0;
             count--;
             insert(tmp);
@@ -465,171 +549,151 @@ struct LoginSet {
     }
 };
 
-// =================== User-orders index ===================
-// Map username -> head of order list (newest first)
-struct UserOrderHead {
-    char username[24];
-    Order *head;
-    bool used;
-};
-struct UserOrderMap {
-    int cap;
-    int count;
-    UserOrderHead *items;
-    UserOrderMap() : cap(0), count(0), items(nullptr) {}
-    void init(int capacity) {
-        cap = capacity;
-        count = 0;
-        items = new UserOrderHead[cap];
-        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head = nullptr; }
-    }
-    void rehash() {
-        int oldcap = cap;
-        UserOrderHead *old = items;
-        cap *= 2;
-        items = new UserOrderHead[cap];
-        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head = nullptr; }
-        count = 0;
-        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
-        delete[] old;
-    }
-    int find_slot(const char *k) const {
-        uint32_t h = hash_str(k);
-        int mask = cap - 1;
-        int i = h & mask;
-        while (items[i].used) {
-            if (my_strcmp(items[i].username, k) == 0) return i;
-            i = (i + 1) & mask;
-        }
-        return -1;
-    }
-    UserOrderHead *get_or_create(const char *k) {
-        if ((count + 1) * 2 > cap) rehash();
-        uint32_t h = hash_str(k);
-        int mask = cap - 1;
-        int i = h & mask;
-        while (items[i].used) {
-            if (my_strcmp(items[i].username, k) == 0) return &items[i];
-            i = (i + 1) & mask;
-        }
-        items[i].used = true;
-        strncpy(items[i].username, k, 23);
-        items[i].username[23] = 0;
-        items[i].head = nullptr;
-        count++;
-        return &items[i];
-    }
-    UserOrderHead *find(const char *k) {
-        int s = find_slot(k);
-        if (s < 0) return nullptr;
-        return &items[s];
-    }
-    void insert_internal(const UserOrderHead &h) {
-        uint32_t hv = hash_str(h.username);
-        int mask = cap - 1;
-        int i = hv & mask;
-        while (items[i].used) i = (i + 1) & mask;
-        items[i] = h;
-        items[i].used = true;
-        count++;
-    }
-};
-
-// =================== Per-train-day pending queue ===================
-// Map (trainID, day) -> head of pending order queue (oldest first)
-// We'll use a hash map keyed by trainID+day.
-struct PendingHead {
-    char trainID[24];
-    int day;
-    Order *head;
-    Order *tail;
-    bool used;
-};
-struct PendingMap {
-    int cap;
-    int count;
-    PendingHead *items;
-    PendingMap() : cap(0), count(0), items(nullptr) {}
-    void init(int capacity) {
-        cap = capacity;
-        count = 0;
-        items = new PendingHead[cap];
-        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head = nullptr; items[i].tail = nullptr; }
-    }
-    static uint32_t key_hash(const char *t, int d) {
-        uint32_t h = hash_str(t);
-        h ^= (uint32_t)d * 2654435761u;
-        return h;
-    }
-    void rehash() {
-        int oldcap = cap;
-        PendingHead *old = items;
-        cap *= 2;
-        items = new PendingHead[cap];
-        for (int i = 0; i < cap; i++) { items[i].used = false; items[i].head = nullptr; items[i].tail = nullptr; }
-        count = 0;
-        for (int i = 0; i < oldcap; i++) if (old[i].used) insert_internal(old[i]);
-        delete[] old;
-    }
-    int find_slot(const char *t, int d) const {
-        uint32_t h = key_hash(t, d);
-        int mask = cap - 1;
-        int i = h & mask;
-        while (items[i].used) {
-            if (items[i].day == d && my_strcmp(items[i].trainID, t) == 0) return i;
-            i = (i + 1) & mask;
-        }
-        return -1;
-    }
-    PendingHead *get_or_create(const char *t, int d) {
-        if ((count + 1) * 2 > cap) rehash();
-        uint32_t h = key_hash(t, d);
-        int mask = cap - 1;
-        int i = h & mask;
-        while (items[i].used) {
-            if (items[i].day == d && my_strcmp(items[i].trainID, t) == 0) return &items[i];
-            i = (i + 1) & mask;
-        }
-        items[i].used = true;
-        strncpy(items[i].trainID, t, 23);
-        items[i].trainID[23] = 0;
-        items[i].day = d;
-        items[i].head = nullptr;
-        items[i].tail = nullptr;
-        count++;
-        return &items[i];
-    }
-    PendingHead *find(const char *t, int d) {
-        int s = find_slot(t, d);
-        if (s < 0) return nullptr;
-        return &items[s];
-    }
-    void insert_internal(const PendingHead &h) {
-        uint32_t hv = key_hash(h.trainID, h.day);
-        int mask = cap - 1;
-        int i = hv & mask;
-        while (items[i].used) i = (i + 1) & mask;
-        items[i] = h;
-        items[i].used = true;
-        count++;
-    }
-};
-
-// =================== Globals ===================
+// ===== Globals =====
 static UserMap g_users;
 static TrainMap g_trains;
 static StationMap g_stations;
-static LoginSet g_logged;
 static UserOrderMap g_user_orders;
 static PendingMap g_pending;
-static long long g_timestamp = 0;
+static LoginSet g_logged;
 
-// =================== Argument parsing ===================
-// Parse a command line into argv tokens (split by spaces).
-// Returns count of tokens. tokens[i] points into the original buffer (which we modify).
+// ===== Persistence =====
+// Format (binary, little-endian assumed; same machine for save & load on OJ):
+//   uint32 MAGIC
+//   long long g_timestamp
+//   int g_users.count, then [User struct] * count (only used)
+//   int g_trains.count, then for each: [Train w/o seats], then int days, int segs, then seats[days*segs]
+//   int g_orders_count, then [Order struct] * count
+//   int g_user_orders.count, then for each: UserOrderHead struct
+//   int g_pending.count, then for each: PendingHead struct
+
+#define MAGIC 0xC0FFEE17u
+
+static bool save_state() {
+    FILE *f = fopen(STATE_FILE, "wb");
+    if (!f) return false;
+    uint32_t magic = MAGIC;
+    fwrite(&magic, sizeof(magic), 1, f);
+    fwrite(&g_timestamp, sizeof(g_timestamp), 1, f);
+
+    // Users
+    fwrite(&g_users.count, sizeof(int), 1, f);
+    for (int i = 0; i < g_users.cap; i++) {
+        if (g_users.items[i].used) fwrite(&g_users.items[i], sizeof(User), 1, f);
+    }
+
+    // Trains
+    fwrite(&g_trains.count, sizeof(int), 1, f);
+    for (int i = 0; i < g_trains.cap; i++) {
+        if (!g_trains.items[i].used) continue;
+        Train &t = g_trains.items[i];
+        // Save struct WITHOUT the seats pointer effectively (we ignore the pointer value on load).
+        fwrite(&t, sizeof(Train), 1, f);
+        int days = t.released ? (t.saleEnd - t.saleStart + 1) : 0;
+        int segs = t.released ? (t.stationNum - 1) : 0;
+        fwrite(&days, sizeof(int), 1, f);
+        fwrite(&segs, sizeof(int), 1, f);
+        if (days > 0 && segs > 0 && t.seats) fwrite(t.seats, sizeof(int), (long long)days * segs, f);
+    }
+
+    // Orders
+    fwrite(&g_orders_count, sizeof(int), 1, f);
+    if (g_orders_count > 0) fwrite(g_orders, sizeof(Order), g_orders_count, f);
+
+    // User orders heads
+    fwrite(&g_user_orders.count, sizeof(int), 1, f);
+    for (int i = 0; i < g_user_orders.cap; i++) {
+        if (g_user_orders.items[i].used) fwrite(&g_user_orders.items[i], sizeof(UserOrderHead), 1, f);
+    }
+
+    // Pending heads
+    fwrite(&g_pending.count, sizeof(int), 1, f);
+    for (int i = 0; i < g_pending.cap; i++) {
+        if (g_pending.items[i].used) fwrite(&g_pending.items[i], sizeof(PendingHead), 1, f);
+    }
+
+    fclose(f);
+    return true;
+}
+
+static bool load_state() {
+    FILE *f = fopen(STATE_FILE, "rb");
+    if (!f) return false;
+    uint32_t magic = 0;
+    if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != MAGIC) { fclose(f); return false; }
+    if (fread(&g_timestamp, sizeof(g_timestamp), 1, f) != 1) { fclose(f); return false; }
+
+    int n;
+    // Users
+    if (fread(&n, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+    for (int i = 0; i < n; i++) {
+        User u;
+        if (fread(&u, sizeof(User), 1, f) != 1) { fclose(f); return false; }
+        g_users.insert(u);
+    }
+
+    // Trains
+    if (fread(&n, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+    for (int i = 0; i < n; i++) {
+        Train t;
+        if (fread(&t, sizeof(Train), 1, f) != 1) { fclose(f); return false; }
+        t.seats = nullptr;
+        int days = 0, segs = 0;
+        if (fread(&days, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+        if (fread(&segs, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+        if (days > 0 && segs > 0) {
+            t.seats = new int[(long long)days * segs];
+            if ((int)fread(t.seats, sizeof(int), (long long)days * segs, f) != days * segs) {
+                fclose(f); return false;
+            }
+        }
+        g_trains.insert(t);
+        // Rebuild station index
+        if (t.released) {
+            // Re-find inserted train (since insert copies)
+            Train *tin = g_trains.get(t.trainID);
+            for (int k = 0; k < t.stationNum; k++) {
+                StationTrains *st = g_stations.get_or_create(t.stations[k].s);
+                station_add_train(st, t.trainID, k);
+            }
+            (void)tin;
+        }
+    }
+
+    // Orders
+    if (fread(&g_orders_count, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+    if (g_orders_count > 0) {
+        g_orders_cap = 1024;
+        while (g_orders_cap < g_orders_count) g_orders_cap *= 2;
+        g_orders = new Order[g_orders_cap];
+        if ((int)fread(g_orders, sizeof(Order), g_orders_count, f) != g_orders_count) { fclose(f); return false; }
+    }
+
+    // User orders heads
+    if (fread(&n, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+    for (int i = 0; i < n; i++) {
+        UserOrderHead h;
+        if (fread(&h, sizeof(UserOrderHead), 1, f) != 1) { fclose(f); return false; }
+        if ((g_user_orders.count + 1) * 2 > g_user_orders.cap) g_user_orders.rehash();
+        g_user_orders.insert_internal(h);
+    }
+
+    // Pending heads
+    if (fread(&n, sizeof(int), 1, f) != 1) { fclose(f); return false; }
+    for (int i = 0; i < n; i++) {
+        PendingHead h;
+        if (fread(&h, sizeof(PendingHead), 1, f) != 1) { fclose(f); return false; }
+        if ((g_pending.count + 1) * 2 > g_pending.cap) g_pending.rehash();
+        g_pending.insert_internal(h);
+    }
+
+    fclose(f);
+    return true;
+}
+
+// ===== Argument parsing =====
 static int tokenize(char *buf, char **tokens, int max_tokens) {
-    int n = 0;
-    int i = 0;
+    int n = 0; int i = 0;
     while (buf[i]) {
         while (buf[i] == ' ' || buf[i] == '\t') i++;
         if (!buf[i]) break;
@@ -640,14 +704,11 @@ static int tokenize(char *buf, char **tokens, int max_tokens) {
     }
     return n;
 }
-
-// Parse args of form -<key> <value>. Sets keymap[key] = value pointer or null.
 struct ParsedArgs {
-    const char *vals[26]; // index by key letter a..z
+    const char *vals[26];
     void clear() { for (int i = 0; i < 26; i++) vals[i] = nullptr; }
     const char *get(char k) const { return vals[k - 'a']; }
 };
-
 static void parse_args(char **tokens, int n_tokens, int start_idx, ParsedArgs &args) {
     args.clear();
     for (int i = start_idx; i + 1 < n_tokens; i += 2) {
@@ -656,34 +717,67 @@ static void parse_args(char **tokens, int n_tokens, int start_idx, ParsedArgs &a
         }
     }
 }
-
-// Split "a|b|c|..." in-place. Returns count and pointers into the buffer.
 static int split_pipe(char *s, char **out, int max_n) {
     int n = 0;
     out[n++] = s;
     while (*s) {
-        if (*s == '|') {
-            *s = 0;
-            if (n < max_n) out[n++] = s + 1;
-        }
+        if (*s == '|') { *s = 0; if (n < max_n) out[n++] = s + 1; }
         s++;
     }
     return n;
 }
 
-// =================== Commands ===================
+// ===== Helpers =====
+static int find_station_in_train(const Train *t, const char *name) {
+    for (int k = 0; k < t->stationNum; k++) if (my_strcmp(t->stations[k].s, name) == 0) return k;
+    return -1;
+}
+static int min_seats(const Train *t, int day_idx, int from_idx, int to_idx) {
+    int segs = t->stationNum - 1;
+    int mn = t->seatNum;
+    for (int k = from_idx; k < to_idx; k++) {
+        int v = t->seats[day_idx * segs + k];
+        if (v < mn) mn = v;
+    }
+    return mn;
+}
+static void take_seats(Train *t, int day_idx, int from_idx, int to_idx, int num) {
+    int segs = t->stationNum - 1;
+    for (int k = from_idx; k < to_idx; k++) t->seats[day_idx * segs + k] -= num;
+}
+static void return_seats(Train *t, int day_idx, int from_idx, int to_idx, int num) {
+    int segs = t->stationNum - 1;
+    for (int k = from_idx; k < to_idx; k++) t->seats[day_idx * segs + k] += num;
+}
+
+// Insertion sort
+template<typename T, typename Cmp>
+static void sort_arr(T *arr, int n, Cmp cmp) {
+    for (int i = 1; i < n; i++) {
+        T x = arr[i];
+        int j = i - 1;
+        while (j >= 0 && cmp(x, arr[j])) { arr[j + 1] = arr[j]; j--; }
+        arr[j + 1] = x;
+    }
+}
+
+// ===== Order list helpers =====
+static void user_orders_push(const char *username, int oid) {
+    UserOrderHead *h = g_user_orders.get_or_create(username);
+    g_orders[oid].user_prev_id = -1;
+    g_orders[oid].user_next_id = h->head_id;
+    if (h->head_id >= 0) g_orders[h->head_id].user_prev_id = oid;
+    h->head_id = oid;
+}
+
+// ===== Commands =====
 
 static void cmd_add_user(const ParsedArgs &a) {
-    const char *c = a.get('c');
-    const char *u = a.get('u');
-    const char *p = a.get('p');
-    const char *n = a.get('n');
-    const char *m = a.get('m');
-    const char *g = a.get('g');
+    const char *c = a.get('c'), *u = a.get('u'), *p = a.get('p');
+    const char *n = a.get('n'), *m = a.get('m'), *g = a.get('g');
     if (!u || !p || !n || !m) { puts("-1"); return; }
 
     if (g_users.count == 0) {
-        // First user: privilege 10
         User nu;
         nu.used = true;
         strncpy(nu.username, u, 23); nu.username[23] = 0;
@@ -692,8 +786,7 @@ static void cmd_add_user(const ParsedArgs &a) {
         strncpy(nu.mailAddr, m, 35); nu.mailAddr[35] = 0;
         nu.privilege = 10;
         if (!g_users.insert(nu)) { puts("-1"); return; }
-        puts("0");
-        return;
+        puts("0"); return;
     }
 
     if (!c || !g) { puts("-1"); return; }
@@ -716,8 +809,7 @@ static void cmd_add_user(const ParsedArgs &a) {
 }
 
 static void cmd_login(const ParsedArgs &a) {
-    const char *u = a.get('u');
-    const char *p = a.get('p');
+    const char *u = a.get('u'), *p = a.get('p');
     if (!u || !p) { puts("-1"); return; }
     User *user = g_users.get(u);
     if (!user) { puts("-1"); return; }
@@ -736,8 +828,7 @@ static void cmd_logout(const ParsedArgs &a) {
 }
 
 static void cmd_query_profile(const ParsedArgs &a) {
-    const char *c = a.get('c');
-    const char *u = a.get('u');
+    const char *c = a.get('c'), *u = a.get('u');
     if (!c || !u) { puts("-1"); return; }
     if (!g_logged.contains(c)) { puts("-1"); return; }
     User *cu = g_users.get(c);
@@ -748,12 +839,8 @@ static void cmd_query_profile(const ParsedArgs &a) {
 }
 
 static void cmd_modify_profile(const ParsedArgs &a) {
-    const char *c = a.get('c');
-    const char *u = a.get('u');
-    const char *p = a.get('p');
-    const char *n = a.get('n');
-    const char *m = a.get('m');
-    const char *g = a.get('g');
+    const char *c = a.get('c'), *u = a.get('u'), *p = a.get('p');
+    const char *n = a.get('n'), *m = a.get('m'), *g = a.get('g');
     if (!c || !u) { puts("-1"); return; }
     if (!g_logged.contains(c)) { puts("-1"); return; }
     User *cu = g_users.get(c);
@@ -774,79 +861,58 @@ static void cmd_modify_profile(const ParsedArgs &a) {
 }
 
 static void cmd_add_train(const ParsedArgs &a) {
-    const char *i = a.get('i');
-    const char *n = a.get('n');
-    const char *m = a.get('m');
-    const char *s = a.get('s');
-    const char *p = a.get('p');
-    const char *x = a.get('x');
-    const char *t = a.get('t');
-    const char *o = a.get('o');
-    const char *d = a.get('d');
-    const char *y = a.get('y');
+    const char *i = a.get('i'), *n = a.get('n'), *m = a.get('m'), *s = a.get('s');
+    const char *p = a.get('p'), *x = a.get('x'), *t = a.get('t'), *o = a.get('o');
+    const char *d = a.get('d'), *y = a.get('y');
     if (!i || !n || !m || !s || !p || !x || !t || !o || !d || !y) { puts("-1"); return; }
 
     int stationNum = atoi(n);
     int seatNum = atoi(m);
     if (stationNum < 2 || stationNum > 100 || seatNum <= 0) { puts("-1"); return; }
-
     if (g_trains.get(i)) { puts("-1"); return; }
 
     Train tr;
-    tr.used = true;
-    tr.released = false;
-    tr.seats = nullptr;
+    memset(&tr, 0, sizeof(Train));
+    tr.used = true; tr.released = false; tr.seats = nullptr;
     strncpy(tr.trainID, i, 23); tr.trainID[23] = 0;
     tr.stationNum = stationNum;
     tr.seatNum = seatNum;
     tr.type = y[0];
 
-    // Stations
     {
-        char buf[2048];
-        strncpy(buf, s, 2047); buf[2047] = 0;
+        char buf[2048]; strncpy(buf, s, 2047); buf[2047] = 0;
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
         if (cnt != stationNum) { puts("-1"); return; }
-        for (int k = 0; k < cnt; k++) {
-            strncpy(tr.stations[k].s, parts[k], 33); tr.stations[k].s[33] = 0;
-        }
+        for (int k = 0; k < cnt; k++) { strncpy(tr.stations[k].s, parts[k], 33); tr.stations[k].s[33] = 0; }
     }
-    // Prices (cumulative)
     {
-        char buf[1024];
-        strncpy(buf, p, 1023); buf[1023] = 0;
+        char buf[1024]; strncpy(buf, p, 1023); buf[1023] = 0;
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
         if (cnt != stationNum - 1) { puts("-1"); return; }
         tr.prices[0] = 0;
         for (int k = 0; k < cnt; k++) tr.prices[k + 1] = tr.prices[k] + atoi(parts[k]);
     }
-    // Times
     int travel[100], stopover[100];
     {
-        char buf[1024];
-        strncpy(buf, t, 1023); buf[1023] = 0;
+        char buf[1024]; strncpy(buf, t, 1023); buf[1023] = 0;
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
         if (cnt != stationNum - 1) { puts("-1"); return; }
         for (int k = 0; k < cnt; k++) travel[k] = atoi(parts[k]);
     }
     {
-        char buf[1024];
-        strncpy(buf, o, 1023); buf[1023] = 0;
+        char buf[1024]; strncpy(buf, o, 1023); buf[1023] = 0;
         char *parts[100];
         int cnt = split_pipe(buf, parts, 100);
-        if (stationNum == 2) {
-            // expect "_"
-        } else {
+        if (stationNum > 2) {
             if (cnt != stationNum - 2) { puts("-1"); return; }
             for (int k = 0; k < cnt; k++) stopover[k] = atoi(parts[k]);
         }
     }
     tr.startTime = parse_time(x);
-    tr.leaveTimes[0] = 0;
-    tr.arriveTimes[0] = 0;
+    tr.leaveTimes[0] = 0; tr.arriveTimes[0] = 0;
     int cur = 0;
     for (int k = 0; k < stationNum - 1; k++) {
         tr.arriveTimes[k + 1] = cur + travel[k];
@@ -855,14 +921,11 @@ static void cmd_add_train(const ParsedArgs &a) {
             tr.leaveTimes[k + 1] = cur + stopover[k];
             cur = tr.leaveTimes[k + 1];
         } else {
-            tr.leaveTimes[k + 1] = cur; // terminal: same as arrive
+            tr.leaveTimes[k + 1] = cur;
         }
     }
-
-    // Sale dates
     {
-        char buf[16];
-        strncpy(buf, d, 15); buf[15] = 0;
+        char buf[16]; strncpy(buf, d, 15); buf[15] = 0;
         char *parts[2];
         int cnt = split_pipe(buf, parts, 2);
         if (cnt != 2) { puts("-1"); return; }
@@ -895,7 +958,6 @@ static void cmd_release_train(const ParsedArgs &a) {
     for (int dd = 0; dd < days; dd++)
         for (int sg = 0; sg < segs; sg++)
             t->seats[dd * segs + sg] = t->seatNum;
-    // Add to station index
     for (int k = 0; k < t->stationNum; k++) {
         StationTrains *st = g_stations.get_or_create(t->stations[k].s);
         station_add_train(st, t->trainID, k);
@@ -904,8 +966,7 @@ static void cmd_release_train(const ParsedArgs &a) {
 }
 
 static void cmd_query_train(const ParsedArgs &a) {
-    const char *i = a.get('i');
-    const char *d = a.get('d');
+    const char *i = a.get('i'), *d = a.get('d');
     if (!i || !d) { puts("-1"); return; }
     Train *t = g_trains.get(i);
     if (!t) { puts("-1"); return; }
@@ -916,18 +977,10 @@ static void cmd_query_train(const ParsedArgs &a) {
     int base_min = day * 1440 + t->startTime;
     for (int k = 0; k < t->stationNum; k++) {
         char arr_s[16] = {0}, lev_s[16] = {0};
-        if (k == 0) {
-            strcpy(arr_s, "xx-xx xx:xx");
-        } else {
-            int abs_t = base_min + t->arriveTimes[k];
-            format_datetime(abs_t, arr_s);
-        }
-        if (k == t->stationNum - 1) {
-            strcpy(lev_s, "xx-xx xx:xx");
-        } else {
-            int abs_t = base_min + t->leaveTimes[k];
-            format_datetime(abs_t, lev_s);
-        }
+        if (k == 0) strcpy(arr_s, "xx-xx xx:xx");
+        else format_datetime(base_min + t->arriveTimes[k], arr_s);
+        if (k == t->stationNum - 1) strcpy(lev_s, "xx-xx xx:xx");
+        else format_datetime(base_min + t->leaveTimes[k], lev_s);
         int price = t->prices[k];
         if (k == t->stationNum - 1) {
             printf("%s %s -> %s %d x\n", t->stations[k].s, arr_s, lev_s, price);
@@ -944,127 +997,50 @@ static void cmd_query_train(const ParsedArgs &a) {
     }
 }
 
-// Find index of station name in train (returns -1 if not found)
-static int find_station_in_train(const Train *t, const char *name) {
-    for (int k = 0; k < t->stationNum; k++) {
-        if (my_strcmp(t->stations[k].s, name) == 0) return k;
-    }
-    return -1;
-}
-
-// Compute available seats from segment from_idx to to_idx-1 on day_idx
-static int min_seats(const Train *t, int day_idx, int from_idx, int to_idx) {
-    int segs = t->stationNum - 1;
-    int mn = t->seatNum;
-    for (int k = from_idx; k < to_idx; k++) {
-        int v = t->seats[day_idx * segs + k];
-        if (v < mn) mn = v;
-    }
-    return mn;
-}
-
-// Subtract `num` seats from segments [from_idx, to_idx)
-static void take_seats(Train *t, int day_idx, int from_idx, int to_idx, int num) {
-    int segs = t->stationNum - 1;
-    for (int k = from_idx; k < to_idx; k++) t->seats[day_idx * segs + k] -= num;
-}
-static void return_seats(Train *t, int day_idx, int from_idx, int to_idx, int num) {
-    int segs = t->stationNum - 1;
-    for (int k = from_idx; k < to_idx; k++) t->seats[day_idx * segs + k] += num;
-}
-
-// Sort helper: insertion sort on small arrays
-template<typename T, typename Cmp>
-static void sort_arr(T *arr, int n, Cmp cmp) {
-    for (int i = 1; i < n; i++) {
-        T x = arr[i];
-        int j = i - 1;
-        while (j >= 0 && cmp(x, arr[j])) {
-            arr[j + 1] = arr[j];
-            j--;
-        }
-        arr[j + 1] = x;
-    }
-}
-
 struct TicketResult {
     char trainID[24];
-    int leave_time;     // absolute minutes
-    int arrive_time;    // absolute minutes
-    int duration;
-    int price;
-    int seat;
-    int day_idx;        // train's day index from saleStart
-    int from_idx, to_idx;
+    int leave_time, arrive_time, duration, price, seat;
 };
 
 static void cmd_query_ticket(const ParsedArgs &a) {
-    const char *s = a.get('s');
-    const char *t = a.get('t');
-    const char *d = a.get('d');
-    const char *p = a.get('p');
+    const char *s = a.get('s'), *t = a.get('t'), *d = a.get('d'), *p = a.get('p');
     if (!s || !t || !d) { puts("-1"); return; }
-    bool sort_by_time = true;
-    if (p && my_strcmp(p, "cost") == 0) sort_by_time = false;
-
+    bool sort_by_time = !(p && my_strcmp(p, "cost") == 0);
     int boarding_day = parse_date(d);
     StationTrains *sf = g_stations.find(s);
     StationTrains *st_to = g_stations.find(t);
     if (!sf || !st_to) { puts("0"); return; }
 
-    // Linear scan: collect candidate trainIDs that visit s
-    static TicketResult results[2048];
+    static TicketResult results[8192];
     int rcount = 0;
-
     for (int i = 0; i < sf->len; i++) {
         const char *tid = sf->list[i].trainID;
         int from_idx = sf->list[i].station_idx;
         Train *tr = g_trains.get(tid);
         if (!tr || !tr->released) continue;
-        if (from_idx == tr->stationNum - 1) continue;
-        // Find this train in st_to
+        if (from_idx >= tr->stationNum - 1) continue;
         int to_idx = -1;
         for (int j = 0; j < st_to->len; j++) {
-            if (my_strcmp(st_to->list[j].trainID, tid) == 0) {
-                if (st_to->list[j].station_idx > from_idx) {
-                    to_idx = st_to->list[j].station_idx;
-                    break;
-                }
+            if (my_strcmp(st_to->list[j].trainID, tid) == 0 && st_to->list[j].station_idx > from_idx) {
+                to_idx = st_to->list[j].station_idx; break;
             }
         }
         if (to_idx < 0) continue;
-
-        // Boarding day at station from_idx => train_start_day s.t. base_min + leaveTimes[from_idx] / 1440 = boarding_day
-        int leave_min_offset = tr->leaveTimes[from_idx];
-        int base_day = boarding_day - (tr->startTime + leave_min_offset) / 1440;
-        // hmm careful: leave at station from_idx = base_day*1440 + startTime + leaveTimes[from_idx]
-        // boarding_day = floor((startTime + leaveTimes[from_idx]) / 1440) + base_day - wait, base_day already in days
-        // Re-derive: train day index in saleStart-saleEnd; absolute leave date = base_day + (startTime + leaveTimes[from_idx])/1440
-        // boarding_day = base_day + days_offset
-        int days_offset = (tr->startTime + leave_min_offset) / 1440;
+        int leave_off = tr->leaveTimes[from_idx];
+        int days_offset = (tr->startTime + leave_off) / 1440;
         int train_day = boarding_day - days_offset;
         if (train_day < tr->saleStart || train_day > tr->saleEnd) continue;
         int day_idx = train_day - tr->saleStart;
-
-        int leave_abs = train_day * 1440 + tr->startTime + tr->leaveTimes[from_idx];
+        int leave_abs = train_day * 1440 + tr->startTime + leave_off;
         int arrive_abs = train_day * 1440 + tr->startTime + tr->arriveTimes[to_idx];
         int seat = min_seats(tr, day_idx, from_idx, to_idx);
         int price = tr->prices[to_idx] - tr->prices[from_idx];
-        int duration = arrive_abs - leave_abs;
-
-        if (rcount >= 2048) break;
+        if (rcount >= 8192) break;
         TicketResult &r = results[rcount++];
         strncpy(r.trainID, tid, 23); r.trainID[23] = 0;
-        r.leave_time = leave_abs;
-        r.arrive_time = arrive_abs;
-        r.duration = duration;
-        r.price = price;
-        r.seat = seat;
-        r.day_idx = day_idx;
-        r.from_idx = from_idx;
-        r.to_idx = to_idx;
+        r.leave_time = leave_abs; r.arrive_time = arrive_abs;
+        r.duration = arrive_abs - leave_abs; r.price = price; r.seat = seat;
     }
-
     if (sort_by_time) {
         sort_arr(results, rcount, [](const TicketResult &a, const TicketResult &b){
             if (a.duration != b.duration) return a.duration < b.duration;
@@ -1076,7 +1052,6 @@ static void cmd_query_ticket(const ParsedArgs &a) {
             return my_strcmp(a.trainID, b.trainID) < 0;
         });
     }
-
     printf("%d\n", rcount);
     for (int i = 0; i < rcount; i++) {
         char lt[16], at[16];
@@ -1086,30 +1061,20 @@ static void cmd_query_ticket(const ParsedArgs &a) {
     }
 }
 
-// query_transfer: find best transfer through any intermediate station
-// We iterate trains passing through s, then for each, iterate later stations as intermediate.
-// For each intermediate, look for trains passing through it that also pass through t (later).
 static void cmd_query_transfer(const ParsedArgs &a) {
-    const char *s = a.get('s');
-    const char *t = a.get('t');
-    const char *d = a.get('d');
-    const char *p = a.get('p');
+    const char *s = a.get('s'), *t = a.get('t'), *d = a.get('d'), *p = a.get('p');
     if (!s || !t || !d) { puts("0"); return; }
-    bool sort_by_time = true;
-    if (p && my_strcmp(p, "cost") == 0) sort_by_time = false;
+    bool sort_by_time = !(p && my_strcmp(p, "cost") == 0);
     int boarding_day = parse_date(d);
-
     StationTrains *sf = g_stations.find(s);
     if (!sf) { puts("0"); return; }
 
     bool found = false;
-    int best_total_time = 0, best_total_cost = 0, best_train1_time = 0;
+    int best_total_time = 0, best_total_cost = 0;
     char best_t1[24], best_t2[24];
     int best_t1_leave = 0, best_t1_arr = 0, best_t1_price = 0, best_t1_seat = 0;
     int best_t2_leave = 0, best_t2_arr = 0, best_t2_price = 0, best_t2_seat = 0;
     char best_inter[34];
-    int best_t1_day = 0, best_t1_fi = 0, best_t1_ti = 0;
-    int best_t2_day = 0, best_t2_fi = 0, best_t2_ti = 0;
 
     for (int i = 0; i < sf->len; i++) {
         const char *tid1 = sf->list[i].trainID;
@@ -1117,8 +1082,6 @@ static void cmd_query_transfer(const ParsedArgs &a) {
         Train *tr1 = g_trains.get(tid1);
         if (!tr1 || !tr1->released) continue;
         if (from1 >= tr1->stationNum - 1) continue;
-
-        // Determine train1 start day
         int days_offset1 = (tr1->startTime + tr1->leaveTimes[from1]) / 1440;
         int train_day1 = boarding_day - days_offset1;
         if (train_day1 < tr1->saleStart || train_day1 > tr1->saleEnd) continue;
@@ -1129,11 +1092,9 @@ static void cmd_query_transfer(const ParsedArgs &a) {
             const char *inter = tr1->stations[mid1].s;
             if (my_strcmp(inter, t) == 0) continue;
             int arr1 = train_day1 * 1440 + tr1->startTime + tr1->arriveTimes[mid1];
-            int dur1 = arr1 - leave1;
             int seat1 = min_seats(tr1, day_idx1, from1, mid1);
             int price1 = tr1->prices[mid1] - tr1->prices[from1];
 
-            // Find trains visiting inter
             StationTrains *si = g_stations.find(inter);
             if (!si) continue;
             for (int j = 0; j < si->len; j++) {
@@ -1143,37 +1104,29 @@ static void cmd_query_transfer(const ParsedArgs &a) {
                 Train *tr2 = g_trains.get(tid2);
                 if (!tr2 || !tr2->released) continue;
                 if (from2 >= tr2->stationNum - 1) continue;
-
-                // Find t in tr2 after from2
                 int to2 = -1;
-                for (int k = from2 + 1; k < tr2->stationNum; k++) {
+                for (int k = from2 + 1; k < tr2->stationNum; k++)
                     if (my_strcmp(tr2->stations[k].s, t) == 0) { to2 = k; break; }
-                }
                 if (to2 < 0) continue;
 
-                // Determine earliest train_day2 such that leave2 >= arr1.
-                // leave2 = train_day2 * 1440 + tr2->startTime + tr2->leaveTimes[from2]
-                int leave_offset2 = tr2->startTime + tr2->leaveTimes[from2];
-                int min_leave_day = (arr1 - leave_offset2 + 1440 - 1);
+                int leave_off2 = tr2->startTime + tr2->leaveTimes[from2];
+                // earliest train_day2 such that leave2 = train_day2 * 1440 + leave_off2 >= arr1
                 int min_train_day2;
-                // ceiling division for arr1 - leave_offset2 over 1440
-                int diff = arr1 - leave_offset2;
+                int diff = arr1 - leave_off2;
                 if (diff <= 0) min_train_day2 = 0;
                 else min_train_day2 = (diff + 1439) / 1440;
                 if (min_train_day2 < tr2->saleStart) min_train_day2 = tr2->saleStart;
                 if (min_train_day2 > tr2->saleEnd) continue;
                 int train_day2 = min_train_day2;
-                int leave2 = train_day2 * 1440 + leave_offset2;
+                int leave2 = train_day2 * 1440 + leave_off2;
                 if (leave2 < arr1) {
-                    // Recompute
                     int extra = (arr1 - leave2 + 1439) / 1440;
                     train_day2 += extra;
                     if (train_day2 > tr2->saleEnd) continue;
-                    leave2 = train_day2 * 1440 + leave_offset2;
+                    leave2 = train_day2 * 1440 + leave_off2;
                 }
                 int day_idx2 = train_day2 - tr2->saleStart;
                 int arr2 = train_day2 * 1440 + tr2->startTime + tr2->arriveTimes[to2];
-                int dur2 = arr2 - leave2;
                 int seat2 = min_seats(tr2, day_idx2, from2, to2);
                 int price2 = tr2->prices[to2] - tr2->prices[from2];
 
@@ -1183,21 +1136,17 @@ static void cmd_query_transfer(const ParsedArgs &a) {
                 bool better = false;
                 if (!found) better = true;
                 else {
-                    int key_a, key_b;
-                    if (sort_by_time) { key_a = total_time; key_b = best_total_time; }
-                    else { key_a = total_cost; key_b = best_total_cost; }
-                    if (key_a < key_b) better = true;
-                    else if (key_a == key_b) {
-                        // Secondary: other key
-                        int sec_a = sort_by_time ? total_cost : total_time;
-                        int sec_b = sort_by_time ? best_total_cost : best_total_time;
-                        if (sec_a < sec_b) better = true;
-                        else if (sec_a == sec_b) {
+                    int ka, kb, sa, sb;
+                    if (sort_by_time) { ka = total_time; kb = best_total_time; sa = total_cost; sb = best_total_cost; }
+                    else { ka = total_cost; kb = best_total_cost; sa = total_time; sb = best_total_time; }
+                    if (ka < kb) better = true;
+                    else if (ka == kb) {
+                        if (sa < sb) better = true;
+                        else if (sa == sb) {
                             int c = my_strcmp(tid1, best_t1);
                             if (c < 0) better = true;
                             else if (c == 0) {
-                                int c2 = my_strcmp(tid2, best_t2);
-                                if (c2 < 0) better = true;
+                                if (my_strcmp(tid2, best_t2) < 0) better = true;
                             }
                         }
                     }
@@ -1207,17 +1156,11 @@ static void cmd_query_transfer(const ParsedArgs &a) {
                     found = true;
                     best_total_time = total_time;
                     best_total_cost = total_cost;
-                    best_train1_time = dur1;
                     strncpy(best_t1, tid1, 23); best_t1[23] = 0;
                     strncpy(best_t2, tid2, 23); best_t2[23] = 0;
                     strncpy(best_inter, inter, 33); best_inter[33] = 0;
                     best_t1_leave = leave1; best_t1_arr = arr1; best_t1_price = price1; best_t1_seat = seat1;
                     best_t2_leave = leave2; best_t2_arr = arr2; best_t2_price = price2; best_t2_seat = seat2;
-                    best_t1_day = day_idx1; best_t1_fi = from1; best_t1_ti = mid1;
-                    best_t2_day = day_idx2; best_t2_fi = from2; best_t2_ti = to2;
-                    (void)best_train1_time;
-                    (void)best_t1_day; (void)best_t1_fi; (void)best_t1_ti;
-                    (void)best_t2_day; (void)best_t2_fi; (void)best_t2_ti;
                 }
             }
         }
@@ -1233,23 +1176,9 @@ static void cmd_query_transfer(const ParsedArgs &a) {
     printf("%s %s %s -> %s %s %d %d\n", best_t2, best_inter, lt2, t, at2, best_t2_price, best_t2_seat);
 }
 
-// Insert order at head of user's order list
-static void user_orders_push(const char *username, Order *o) {
-    UserOrderHead *h = g_user_orders.get_or_create(username);
-    o->user_prev = nullptr;
-    o->user_next = h->head;
-    if (h->head) h->head->user_prev = o;
-    h->head = o;
-}
-
 static void cmd_buy_ticket(const ParsedArgs &a) {
-    const char *u = a.get('u');
-    const char *i = a.get('i');
-    const char *d = a.get('d');
-    const char *n = a.get('n');
-    const char *f = a.get('f');
-    const char *t = a.get('t');
-    const char *q = a.get('q');
+    const char *u = a.get('u'), *i = a.get('i'), *d = a.get('d');
+    const char *n = a.get('n'), *f = a.get('f'), *t = a.get('t'), *q = a.get('q');
     if (!u || !i || !d || !n || !f || !t) { puts("-1"); return; }
     if (!g_logged.contains(u)) { puts("-1"); return; }
     Train *tr = g_trains.get(i);
@@ -1270,45 +1199,36 @@ static void cmd_buy_ticket(const ParsedArgs &a) {
     int arrive_abs = train_day * 1440 + tr->startTime + tr->arriveTimes[to_idx];
 
     bool standby = (q && my_strcmp(q, "true") == 0);
+    int oid = new_order_slot();
+    Order &o = g_orders[oid];
+    strncpy(o.trainID, i, 23); o.trainID[23] = 0;
+    strncpy(o.fromStation, f, 33); o.fromStation[33] = 0;
+    strncpy(o.toStation, t, 33); o.toStation[33] = 0;
+    o.from_idx = from_idx; o.to_idx = to_idx;
+    o.day = train_day; o.num = num; o.price = price_per;
+    o.leave_time = leave_abs; o.arrive_time = arrive_abs;
+    o.timestamp = ++g_timestamp;
+    strncpy(o.username, u, 23); o.username[23] = 0;
+    o.user_prev_id = -1; o.user_next_id = -1; o.queue_next_id = -1;
 
     if (avail >= num) {
         take_seats(tr, day_idx, from_idx, to_idx, num);
-        Order *o = new Order();
-        strncpy(o->trainID, i, 23); o->trainID[23] = 0;
-        strncpy(o->fromStation, f, 33); o->fromStation[33] = 0;
-        strncpy(o->toStation, t, 33); o->toStation[33] = 0;
-        o->from_idx = from_idx; o->to_idx = to_idx;
-        o->day = train_day; o->num = num;
-        o->price = price_per;
-        o->leave_time = leave_abs; o->arrive_time = arrive_abs;
-        o->status = OS_SUCCESS;
-        o->timestamp = ++g_timestamp;
-        strncpy(o->username, u, 23); o->username[23] = 0;
-        o->user_prev = o->user_next = o->queue_next = nullptr;
-        user_orders_push(u, o);
+        o.status = OS_SUCCESS;
+        user_orders_push(u, oid);
         long long total = (long long)price_per * num;
         printf("%lld\n", total);
         return;
     }
-    if (!standby) { puts("-1"); return; }
-    // Add to pending queue
-    Order *o = new Order();
-    strncpy(o->trainID, i, 23); o->trainID[23] = 0;
-    strncpy(o->fromStation, f, 33); o->fromStation[33] = 0;
-    strncpy(o->toStation, t, 33); o->toStation[33] = 0;
-    o->from_idx = from_idx; o->to_idx = to_idx;
-    o->day = train_day; o->num = num;
-    o->price = price_per;
-    o->leave_time = leave_abs; o->arrive_time = arrive_abs;
-    o->status = OS_PENDING;
-    o->timestamp = ++g_timestamp;
-    strncpy(o->username, u, 23); o->username[23] = 0;
-    o->user_prev = o->user_next = o->queue_next = nullptr;
-    user_orders_push(u, o);
-
+    if (!standby) {
+        // Roll back order slot (we appended)
+        g_orders_count--;
+        puts("-1"); return;
+    }
+    o.status = OS_PENDING;
+    user_orders_push(u, oid);
     PendingHead *ph = g_pending.get_or_create(i, train_day);
-    if (!ph->head) { ph->head = ph->tail = o; }
-    else { ph->tail->queue_next = o; ph->tail = o; }
+    if (ph->head_id < 0) { ph->head_id = oid; ph->tail_id = oid; }
+    else { g_orders[ph->tail_id].queue_next_id = oid; ph->tail_id = oid; }
     puts("queue");
 }
 
@@ -1324,140 +1244,143 @@ static void cmd_query_order(const ParsedArgs &a) {
     if (!g_logged.contains(u)) { puts("-1"); return; }
     UserOrderHead *h = g_user_orders.find(u);
     int cnt = 0;
-    Order *cur = h ? h->head : nullptr;
-    Order *p = cur;
-    while (p) { cnt++; p = p->user_next; }
+    int p = h ? h->head_id : -1;
+    while (p >= 0) { cnt++; p = g_orders[p].user_next_id; }
     printf("%d\n", cnt);
-    p = cur;
-    while (p) {
+    p = h ? h->head_id : -1;
+    while (p >= 0) {
+        Order &o = g_orders[p];
         char lt[16], at[16];
-        format_datetime(p->leave_time, lt);
-        format_datetime(p->arrive_time, at);
-        printf("[%s] %s %s %s -> %s %s %d %d\n", status_str(p->status), p->trainID, p->fromStation, lt, p->toStation, at, p->price, p->num);
-        p = p->user_next;
+        format_datetime(o.leave_time, lt);
+        format_datetime(o.arrive_time, at);
+        printf("[%s] %s %s %s -> %s %s %d %d\n", status_str(o.status), o.trainID, o.fromStation, lt, o.toStation, at, o.price, o.num);
+        p = o.user_next_id;
     }
 }
 
-// Try to fulfill pending queue for train+day after seats are returned
 static void try_fulfill_pending(Train *tr, int train_day) {
     PendingHead *ph = g_pending.find(tr->trainID, train_day);
-    if (!ph || !ph->head) return;
+    if (!ph || ph->head_id < 0) return;
     int day_idx = train_day - tr->saleStart;
-    Order *prev = nullptr;
-    Order *o = ph->head;
-    while (o) {
-        if (o->status != OS_PENDING) {
-            // Skip / remove from queue
-            Order *nx = o->queue_next;
-            if (prev) prev->queue_next = nx;
-            else ph->head = nx;
-            if (ph->tail == o) ph->tail = prev;
-            o = nx;
+    int prev = -1;
+    int oid = ph->head_id;
+    while (oid >= 0) {
+        Order &o = g_orders[oid];
+        if (o.status != OS_PENDING) {
+            int nx = o.queue_next_id;
+            if (prev < 0) ph->head_id = nx; else g_orders[prev].queue_next_id = nx;
+            if (ph->tail_id == oid) ph->tail_id = prev;
+            oid = nx;
             continue;
         }
-        int avail = min_seats(tr, day_idx, o->from_idx, o->to_idx);
-        if (avail >= o->num) {
-            take_seats(tr, day_idx, o->from_idx, o->to_idx, o->num);
-            o->status = OS_SUCCESS;
-            // Remove from queue
-            Order *nx = o->queue_next;
-            o->queue_next = nullptr;
-            if (prev) prev->queue_next = nx;
-            else ph->head = nx;
-            if (ph->tail == o) ph->tail = prev;
-            o = nx;
+        int avail = min_seats(tr, day_idx, o.from_idx, o.to_idx);
+        if (avail >= o.num) {
+            take_seats(tr, day_idx, o.from_idx, o.to_idx, o.num);
+            o.status = OS_SUCCESS;
+            int nx = o.queue_next_id;
+            o.queue_next_id = -1;
+            if (prev < 0) ph->head_id = nx; else g_orders[prev].queue_next_id = nx;
+            if (ph->tail_id == oid) ph->tail_id = prev;
+            oid = nx;
         } else {
-            prev = o;
-            o = o->queue_next;
+            prev = oid;
+            oid = o.queue_next_id;
         }
     }
 }
 
 static void cmd_refund_ticket(const ParsedArgs &a) {
-    const char *u = a.get('u');
-    const char *n = a.get('n');
+    const char *u = a.get('u'), *n = a.get('n');
     if (!u) { puts("-1"); return; }
     if (!g_logged.contains(u)) { puts("-1"); return; }
     int idx = n ? atoi(n) : 1;
     if (idx <= 0) { puts("-1"); return; }
     UserOrderHead *h = g_user_orders.find(u);
-    if (!h || !h->head) { puts("-1"); return; }
-    Order *o = h->head;
+    if (!h || h->head_id < 0) { puts("-1"); return; }
+    int oid = h->head_id;
     int k = 1;
-    while (o && k < idx) { o = o->user_next; k++; }
-    if (!o) { puts("-1"); return; }
-    if (o->status == OS_REFUNDED) { puts("-1"); return; }
-    Train *tr = g_trains.get(o->trainID);
-    if (o->status == OS_SUCCESS) {
+    while (oid >= 0 && k < idx) { oid = g_orders[oid].user_next_id; k++; }
+    if (oid < 0) { puts("-1"); return; }
+    Order &o = g_orders[oid];
+    if (o.status == OS_REFUNDED) { puts("-1"); return; }
+    Train *tr = g_trains.get(o.trainID);
+    if (o.status == OS_SUCCESS) {
         if (tr) {
-            int day_idx = o->day - tr->saleStart;
-            return_seats(tr, day_idx, o->from_idx, o->to_idx, o->num);
-            o->status = OS_REFUNDED;
-            try_fulfill_pending(tr, o->day);
+            int day_idx = o.day - tr->saleStart;
+            return_seats(tr, day_idx, o.from_idx, o.to_idx, o.num);
+            o.status = OS_REFUNDED;
+            try_fulfill_pending(tr, o.day);
         } else {
-            o->status = OS_REFUNDED;
+            o.status = OS_REFUNDED;
         }
-    } else { // PENDING -> mark refunded; queue cleanup happens lazily
-        o->status = OS_REFUNDED;
+    } else {
+        o.status = OS_REFUNDED;
     }
     puts("0");
 }
 
 static void cmd_clean() {
-    // Free everything by re-init
-    delete[] g_users.items; g_users.items = nullptr;
-    // Free train seats first
+    // Reset all globals
+    if (g_users.items) delete[] g_users.items;
+    g_users.items = nullptr; g_users.cap = 0; g_users.count = 0;
+
     for (int i = 0; i < g_trains.cap; i++) {
         if (g_trains.items[i].used && g_trains.items[i].seats) delete[] g_trains.items[i].seats;
     }
-    delete[] g_trains.items; g_trains.items = nullptr;
-    // Free station entry lists
+    if (g_trains.items) delete[] g_trains.items;
+    g_trains.items = nullptr; g_trains.cap = 0; g_trains.count = 0;
+
     for (int i = 0; i < g_stations.cap; i++) {
         if (g_stations.items[i].used && g_stations.items[i].list) delete[] g_stations.items[i].list;
     }
-    delete[] g_stations.items; g_stations.items = nullptr;
-    delete[] g_logged.items; g_logged.items = nullptr;
-    // Orders: leak (program exits soon)
-    delete[] g_user_orders.items; g_user_orders.items = nullptr;
-    delete[] g_pending.items; g_pending.items = nullptr;
+    if (g_stations.items) delete[] g_stations.items;
+    g_stations.items = nullptr; g_stations.cap = 0; g_stations.count = 0;
 
-    g_users.cap = 0; g_users.count = 0;
-    g_trains.cap = 0; g_trains.count = 0;
-    g_stations.cap = 0; g_stations.count = 0;
-    g_logged.cap = 0; g_logged.count = 0;
-    g_user_orders.cap = 0; g_user_orders.count = 0;
-    g_pending.cap = 0; g_pending.count = 0;
+    if (g_user_orders.items) delete[] g_user_orders.items;
+    g_user_orders.items = nullptr; g_user_orders.cap = 0; g_user_orders.count = 0;
 
-    g_users.init(8192);
-    g_trains.init(2048);
-    g_stations.init(4096);
-    g_logged.init(2048);
-    g_user_orders.init(8192);
-    g_pending.init(4096);
+    if (g_pending.items) delete[] g_pending.items;
+    g_pending.items = nullptr; g_pending.cap = 0; g_pending.count = 0;
+
+    if (g_logged.items) delete[] g_logged.items;
+    g_logged.items = nullptr; g_logged.cap = 0; g_logged.count = 0;
+
+    if (g_orders) delete[] g_orders;
+    g_orders = nullptr; g_orders_count = 0; g_orders_cap = 0;
     g_timestamp = 0;
+
+    g_users.init(256);
+    g_trains.init(64);
+    g_stations.init(256);
+    g_user_orders.init(256);
+    g_pending.init(256);
+    g_logged.init(64);
+
+    // Remove state file
+    remove(STATE_FILE);
+
     puts("0");
 }
 
-// =================== Main loop ===================
 int main() {
     static char line[8192];
     static char *tokens[256];
 
-    g_users.init(8192);
-    g_trains.init(2048);
-    g_stations.init(4096);
-    g_logged.init(2048);
-    g_user_orders.init(8192);
-    g_pending.init(4096);
+    g_users.init(256);
+    g_trains.init(64);
+    g_stations.init(256);
+    g_user_orders.init(256);
+    g_pending.init(256);
+    g_logged.init(64);
+
+    load_state(); // Will silently fail on first run
 
     while (true) {
         int n = read_line(line, sizeof(line));
         if (n < 0) break;
         if (n == 0) continue;
 
-        // First token is the timestamp [123] OR the command. Some test formats have [N] prefix.
         char *p = line;
-        // Handle optional [timestamp] prefix
         char ts_prefix[32] = {0};
         if (p[0] == '[') {
             char *close = strchr(p, ']');
@@ -1492,11 +1415,14 @@ int main() {
         else if (my_strcmp(cmd, "query_order") == 0) { parse_args(tokens, nt, 1, args); cmd_query_order(args); }
         else if (my_strcmp(cmd, "refund_ticket") == 0) { parse_args(tokens, nt, 1, args); cmd_refund_ticket(args); }
         else if (my_strcmp(cmd, "clean") == 0) { cmd_clean(); }
-        else if (my_strcmp(cmd, "exit") == 0) { puts("bye"); break; }
-        else {
-            // unknown
-            puts("-1");
+        else if (my_strcmp(cmd, "exit") == 0) {
+            puts("bye");
+            save_state();
+            return 0;
         }
+        else { puts("-1"); }
     }
+    // EOF without explicit exit
+    save_state();
     return 0;
 }
